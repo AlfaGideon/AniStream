@@ -1,0 +1,218 @@
+@import "tailwindcss";
+
+/* Дизайн-токены: цвета привязаны к CSS-переменным, поэтому тема меняется на лету */
+@theme inline {
+  --color-base: var(--bg);
+  --color-elev: var(--elev);
+  --color-card: var(--card);
+  --color-edge: var(--edge);
+  --color-ink: var(--text);
+  --color-mute: var(--muted);
+  --color-accent: var(--accent);
+}
+
+:root,
+[data-theme='dark'] {
+  --bg: #0b0d12;
+  --elev: #10141d;
+  --card: #141926;
+  --edge: #242b3d;
+  --text: #eef1f8;
+  --muted: #8b93a7;
+  --accent: #7c5cff;
+  color-scheme: dark;
+}
+
+[data-theme='dim'] {
+  --bg: #15121c;
+  --elev: #1b1725;
+  --card: #221c31;
+  --edge: #342d47;
+  --text: #f2effa;
+  --muted: #9a92b0;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --bg: #f2f3f8;
+  --elev: #ffffff;
+  --card: #ffffff;
+  --edge: #dde1ec;
+  --text: #171a23;
+  --muted: #5d6478;
+  color-scheme: light;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  transition: background 0.35s ease, color 0.35s ease;
+}
+
+.font-display {
+  font-family: 'Unbounded', 'Inter', sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.font-mono2 {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Тонкая стилизация скроллбара */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--edge) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Анимации */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(60px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  50% { box-shadow: 0 0 26px 4px color-mix(in srgb, var(--accent) 55%, transparent); }
+}
+@keyframes kenburns {
+  from { transform: scale(1.0) translateX(0); }
+  to { transform: scale(1.08) translateX(-1.5%); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.anim-rise { animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-fade { animation: fadeIn 0.3s ease both; }
+.anim-scale { animation: scaleIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-slide-right { animation: slideInRight 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.anim-kenburns { animation: kenburns 14s ease-in-out infinite alternate; }
+.anim-glow { animation: pulseGlow 2.6s ease-in-out infinite; }
+.anim-spin { animation: spin 0.9s linear infinite; }
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--text) 8%, transparent), transparent);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s infinite;
+}
+
+/* Обложка карточки: глубина и свечение при наведении */
+.card-glow {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s ease;
+}
+.card-glow:hover {
+  transform: translateY(-6px) scale(1.02);
+  box-shadow:
+    0 18px 44px -12px rgba(0, 0, 0, 0.65),
+    0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    0 0 34px -6px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.text-balance { text-wrap: balance; }
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Блюр для 18+ обложек */
+.adult-blur {
+  filter: blur(14px) saturate(0.4) brightness(0.75);
+  transform: scale(1.1);
+}
+
+/* Ползунки */
+input[type='range'] {
+  accent-color: var(--accent);
+}
+input[type='checkbox'].switch {
+  appearance: none;
+  width: 42px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--edge);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.25s ease;
+  flex: none;
+}
+input[type='checkbox'].switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+input[type='checkbox'].switch:checked {
+  background: var(--accent);
+}
+input[type='checkbox'].switch:checked::after {
+  transform: translateX(18px);
+}
+
+/* Сегментированный контрол */
+.seg-btn {
+  transition: all 0.2s ease;
+}
+.seg-btn[data-active='true'] {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
+  color: #fff;
+}
