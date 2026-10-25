@@ -1,0 +1,8 @@
+{
+  "appId": "ru.anistream.app",
+  "appName": "AniStream",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
