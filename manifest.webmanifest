@@ -1,0 +1,18 @@
+{
+  "name": "AniStream — аниме и манга",
+  "short_name": "AniStream",
+  "description": "Единая библиотека историй и миров",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090a0f",
+  "theme_color": "#090a0f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/anistream-icon-1024.png",
+      "sizes": "1024x1024",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
