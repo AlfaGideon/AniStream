@@ -15,7 +15,7 @@ npm run dev
 
 Android-проект лежит в `android/`. Иконка 1024×1024 находится в `public/anistream-icon-1024.png`, подключена в PWA и установлена в launcher-ресурсы Android.
 
-После push в ветку `arena/02240533-anistream` GitHub Actions собирает `app-debug.apk`. Скачать APK можно в репозитории: **Actions → Build Android APK → последний успешный запуск → Artifacts → AniStream-debug-apk**. Артефакт доступен 30 дней.
+При push в рабочую ветку GitHub Actions собирает `app-debug.apk`. Скачать APK можно в репозитории: **Actions → Build Android APK → последний успешный запуск → Artifacts → AniStream-debug-apk**. Артефакт доступен 30 дней.
 
 Для локальной сборки нужны Node.js, Java 21, Android SDK с API 35:
 
