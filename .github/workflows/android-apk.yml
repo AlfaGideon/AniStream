@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - arena/a53fe3b3-anistream
+    paths-ignore:
+      - 'releases/**'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -45,7 +47,19 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
         working-directory: android
 
-      - name: Upload APK
+      - name: Publish APK to repository
+        run: |
+          mkdir -p releases
+          cp android/app/build/outputs/apk/debug/app-debug.apk releases/AniStream-debug.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/AniStream-debug.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish latest AniStream debug APK"
+            git push
+          fi
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: AniStream-debug-apk
