@@ -3,7 +3,7 @@ import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS } from './catalog.js'
 import { APP_VERSION, APP_BUILD, checkForUpdate, installUpdate } from './app-update.js';
 import { youtubeEmbed, vkEmbed, rutubeEmbed, kodikEmbed, amediaEmbed } from './media-links.js';
 import { vkVideoSearchUrl } from './video-search.js';
-import { connectVk, disconnectVk, getVkAccessToken, initializeVkAuth, isVkConnected } from './vk-auth.js';
+import { connectVk, disconnectVk, getVkAccessToken, refreshVkAccessToken, initializeVkAuth, isVkConnected } from './vk-auth.js';
 
 const state = {
   page: 'home', query: '', filter: 'Аниме', sourceFilter: 'Все источники', genreFilter: '', yearFilter: '', minRating: '0', adult: false, pendingFilter: null,
@@ -342,7 +342,7 @@ async function loadCatalog(reset=true) {
     try{vkAccessToken=await getVkAccessToken();state.vkConnected=isVkConnected();}
     catch(error){state.vkConnected=false;state.vkAuthStatus=error.message||'Авторизация VK истекла.';}
     const videoQuery=state.genreFilter?`${VIDEO_GENRE_TERMS[state.genreFilter]||state.genreFilter} аниме`:'';
-    const result=await searchCatalog({query:state.query.trim(),filter:state.filter,adult:state.adult,page,signal:controller.signal,sourceFilter:state.sourceFilter,videoQuery,videoCredentials:{youtubeApiKey:state.settings.youtubeApiKey,vkAccessToken}});
+    const result=await searchCatalog({query:state.query.trim(),filter:state.filter,adult:state.adult,page,signal:controller.signal,sourceFilter:state.sourceFilter,videoQuery,videoCredentials:{youtubeApiKey:state.settings.youtubeApiKey,vkAccessToken},refreshVkAccessToken});
     if(request!==state.requestId)return;
     state.items=reset?result.items:[...state.items,...result.items.filter(item=>!state.items.some(old=>old.id===item.id))];
     state.pageNum=page;state.hasNext=result.hasNext;state.sources=result.sources;state.sourceHealth=result.health;state.warning=result.warning;

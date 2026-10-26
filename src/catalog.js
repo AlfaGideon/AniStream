@@ -8,7 +8,7 @@ const PAGE_SIZE = 18;
 const VIDEO_CACHE_TTL = 5 * 60 * 1000;
 const videoSearchCache = new Map();
 
-const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:MediaType, $format:[MediaFormat], $isAdult:Boolean!) {
+const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:MediaType, $format:MediaFormat, $isAdult:Boolean!) {
   Page(page:$page, perPage:${PAGE_SIZE}) {
     pageInfo { currentPage hasNextPage total }
     media(search:$search, type:$type, format:$format, isAdult:$isAdult, sort:[POPULARITY_DESC]) {
@@ -112,7 +112,7 @@ function mapKitsu(resource, included=[]) {
 
 async function queryAniList({query,filter,adult,page,signal}) {
   const type=filter==='Аниме'?'ANIME':['Манга','Ранобэ'].includes(filter)?'MANGA':null;
-  const format=filter==='Ранобэ'?['NOVEL']:null;
+  const format=filter==='Ранобэ'?'NOVEL':null;
   const response=await fetch(ANILIST_URL,{method:'POST',signal,headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:MEDIA_QUERY,variables:{page,search:query||null,type,format,isAdult:Boolean(adult)}})});
   if(!response.ok)throw new Error(`AniList ответил ${response.status}`);
   const json=await response.json();
@@ -172,16 +172,25 @@ async function queryYouTubeVideos({query,apiKey,signal}) {
 }
 
 async function queryVkVideos({query,accessToken,signal}) {
-  const params={q:query,v:'5.243',count:'12',sort:'2',adult:'0',extended:'1'};
+  const params={q:query,v:'5.243',count:'12',sort:'2',adult:'0',extended:'1',access_token:accessToken};
+  const body=new URLSearchParams(params).toString();
   let json,status=200;
   if(Capacitor.isNativePlatform()){
-    const response=await CapacitorHttp.get({url:'https://api.vk.ru/method/video.search',params,headers:{Accept:'application/json',Authorization:`Bearer ${accessToken}`},connectTimeout:15000,readTimeout:20000});
+    const response=await CapacitorHttp.post({url:'https://api.vk.ru/method/video.search',data:body,headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},responseType:'json',connectTimeout:15000,readTimeout:20000});
     json=response.data;status=response.status;
   }else{
-    const response=await fetch(`https://api.vk.ru/method/video.search?${new URLSearchParams(params)}`,{signal,headers:{Accept:'application/json',Authorization:`Bearer ${accessToken}`}});
+    const response=await fetch('https://api.vk.ru/method/video.search',{method:'POST',body,signal,headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'}});
     json=await response.json();status=response.status;
   }
-  if(status<200||status>=300||json.error)throw new Error(json.error?.error_msg||`VK API ответил ${status}`);
+  if(status<200||status>=300||json.error){
+    const message=json.error?.error_msg||`VK API ответил ${status}`;
+    if(/access[_ ]token.*(another|different|друг).*ip|ip.*(another|different|друг).*access[_ ]token/i.test(message)){
+      const error=new Error('VK привязал access token к другому IP-адресу. Оставьте VPN подключённым к одному серверу и используйте одинаковый маршрут для AniStream и VK ID. Нажмите «Переподключить VK» в настройках и повторите поиск.');
+      error.code='VK_TOKEN_IP_MISMATCH';
+      throw error;
+    }
+    throw new Error(message);
+  }
   const result=json.response||{};
   return {items:(result.items||[]).filter(video=>video.id&&video.owner_id).map(video=>{
     const id=String(video.id),owner=String(video.owner_id);
@@ -192,7 +201,7 @@ async function queryVkVideos({query,accessToken,signal}) {
   }).filter(video=>video.videoEmbedUrl),hasNext:false};
 }
 
-export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal,videoCredentials={},sourceFilter='Все источники',videoQuery=''}) {
+export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal,videoCredentials={},sourceFilter='Все источники',videoQuery='',refreshVkAccessToken=null}) {
   const requests=[];
   const skipped=[];
   const allSources=sourceFilter==='Все источники';
@@ -216,7 +225,18 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
       else skipped.push({name:'YouTube',status:'skipped',message:'Для карточек YouTube нужен API key; настройте его в настройках источника.'});
     }
     if(allowVk){
-      if(videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:cachedVideoSearch(`vk:${normalizeTitle(effectiveVideoQuery)}`,()=>queryVkVideos({query:effectiveVideoQuery,accessToken:videoCredentials.vkAccessToken,signal}))});
+      if(videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:(async()=>{
+        const cacheKey=`vk:${normalizeTitle(effectiveVideoQuery)}`;
+        try{return await cachedVideoSearch(cacheKey,()=>queryVkVideos({query:effectiveVideoQuery,accessToken:videoCredentials.vkAccessToken,signal}));}
+        catch(error){
+          if(error.code!=='VK_TOKEN_IP_MISMATCH'||typeof refreshVkAccessToken!=='function')throw error;
+          let refreshedToken='';
+          try{refreshedToken=await refreshVkAccessToken();}
+          catch(refreshError){throw new Error(`${error.message} Автообновление не помогло: ${refreshError.message}`);}
+          if(!refreshedToken)throw error;
+          return cachedVideoSearch(cacheKey,()=>queryVkVideos({query:effectiveVideoQuery,accessToken:refreshedToken,signal}));
+        }
+      })()});
       else skipped.push({name:'VK Видео',status:'skipped',message:'Подключите VK ID, чтобы искать видео по категории и названию.'});
     }
   }
@@ -259,7 +279,7 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
   return {
     items,hasNext:sourceResults.some(result=>result.hasNext),
     sources:successes.map(x=>x.name),health,
-    warning:failed.length?`${failed.map(x=>x.name).join(', ')} сейчас недоступен; показаны ответы остальных каталогов.`:'',
+    warning:failed.length?`${failed.map(x=>`${x.name}: ${String(x.result.reason?.message||x.result.reason||'ошибка').slice(0,220)}`).join(' · ')}. Показаны результаты ответивших источников.`:'',
   };
 }
 export async function findKitsuStreaming(item,signal) {

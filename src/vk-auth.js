@@ -192,14 +192,8 @@ export async function connectVk() {
   });
 }
 
-export async function getVkAccessToken() {
-  await initializeVkAuth();
-  if (!vault.session?.accessToken) return '';
-  if (vault.session.expiresAt > Date.now() + 60_000) return vault.session.accessToken;
-  if (!vault.session.refreshToken) {
-    await disconnectVk();
-    throw new Error('Срок авторизации VK истёк. Подключите VK заново в настройках.');
-  }
+async function refreshCurrentVkSession({disconnectOnError=true}={}) {
+  if (!vault.session?.refreshToken) throw new Error('VK ID не выдал refresh token. Переподключите VK в настройках.');
   try {
     const tokenData = await postVkAuth({
       grant_type: 'refresh_token',
@@ -219,9 +213,26 @@ export async function getVkAccessToken() {
     await saveVault();
     return vault.session.accessToken;
   } catch (error) {
-    await disconnectVk();
+    if (disconnectOnError) await disconnectVk();
     throw new Error(`Не удалось обновить авторизацию VK: ${error.message}`);
   }
+}
+
+export async function getVkAccessToken() {
+  await initializeVkAuth();
+  if (!vault.session?.accessToken) return '';
+  if (vault.session.expiresAt > Date.now() + 60_000) return vault.session.accessToken;
+  if (!vault.session.refreshToken) {
+    await disconnectVk();
+    throw new Error('Срок авторизации VK истёк. Подключите VK заново в настройках.');
+  }
+  return refreshCurrentVkSession();
+}
+
+export async function refreshVkAccessToken() {
+  await initializeVkAuth();
+  if (!vault.session?.refreshToken) throw new Error('VK ID не выдал refresh token. Переподключите VK в настройках.');
+  return refreshCurrentVkSession({ disconnectOnError: false });
 }
 
 export async function disconnectVk() {
