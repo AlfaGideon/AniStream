@@ -5,6 +5,8 @@ const ANILIST_URL = 'https://graphql.anilist.co';
 const JIKAN_URL = 'https://api.jikan.moe/v4';
 const KITSU_URL = 'https://kitsu.io/api/edge';
 const PAGE_SIZE = 18;
+const VIDEO_CACHE_TTL = 5 * 60 * 1000;
+const videoSearchCache = new Map();
 
 const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:MediaType, $format:[MediaFormat], $isAdult:Boolean!) {
   Page(page:$page, perPage:${PAGE_SIZE}) {
@@ -23,6 +25,13 @@ function cleanText(value='') {
   return String(value).replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
 }
 function normalizeTitle(value='') { return cleanText(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
+async function cachedVideoSearch(key,run) {
+  const cached=videoSearchCache.get(key);
+  if(cached&&cached.expires>Date.now())return cached.value;
+  const value=await run();
+  videoSearchCache.set(key,{value,expires:Date.now()+VIDEO_CACHE_TTL});
+  return value;
+}
 
 function mapAniList(media) {
   const isNovel = media.type === 'MANGA' && ['NOVEL', 'LIGHT_NOVEL'].includes(media.format);
@@ -183,23 +192,41 @@ async function queryVkVideos({query,accessToken,signal}) {
   }).filter(video=>video.videoEmbedUrl),hasNext:false};
 }
 
-export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal,videoCredentials={}}) {
-  const requests=[
-    {name:'AniList',run:queryAniList({query,filter,adult:filter==='18+'&&adult,page,signal})},
-  ];
-  const videoSkipped=[];
-  if(filter!=='18+'){
-    requests.push({name:'MyAnimeList / Jikan',run:queryJikan({query,filter,page,signal})});
-    requests.push({name:'Kitsu',run:queryKitsu({query,filter,page,signal})});
-    if(query&&page===1&&videoCredentials.youtubeApiKey)requests.push({name:'YouTube',run:queryYouTubeVideos({query,apiKey:videoCredentials.youtubeApiKey,signal})});
-    else if(page===1)videoSkipped.push({name:'YouTube',status:'skipped',message:query?'Добавь YouTube Data API key в Настройки → Автопоиск видео.':'Ищется при вводе названия и наличии YouTube API key.'});
-    if(query&&page===1&&videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:queryVkVideos({query,accessToken:videoCredentials.vkAccessToken,signal})});
-    else if(page===1)videoSkipped.push({name:'VK Видео',status:'skipped',message:query?'Подключи VK ID в Настройки → Автопоиск видео.':'Ищется при вводе названия после подключения VK ID.'});
+export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal,videoCredentials={},sourceFilter='Все источники',videoQuery=''}) {
+  const requests=[];
+  const skipped=[];
+  const allSources=sourceFilter==='Все источники';
+  const catalogSources=allSources||sourceFilter==='Каталоги';
+  const metadataAllowed=filter!=='Видео'&&sourceFilter!=='VK Видео'&&sourceFilter!=='YouTube'&&sourceFilter!=='RuTube'&&sourceFilter!=='Яндекс Видео';
+  const allowAniList=metadataAllowed&&(catalogSources||sourceFilter==='AniList'||(filter==='18+'&&allSources));
+  const allowJikan=metadataAllowed&&filter!=='18+'&&(catalogSources||sourceFilter==='Jikan');
+  const allowKitsu=metadataAllowed&&filter!=='18+'&&(catalogSources||sourceFilter==='Kitsu');
+  if(allowAniList)requests.push({name:'AniList',run:queryAniList({query,filter,adult:filter==='18+'&&adult,page,signal})});
+  if(allowJikan)requests.push({name:'MyAnimeList / Jikan',run:queryJikan({query,filter,page,signal})});
+  if(allowKitsu)requests.push({name:'Kitsu',run:queryKitsu({query,filter,page,signal})});
+
+  const allowVideo=filter!=='18+'&&(allSources||sourceFilter==='VK Видео'||sourceFilter==='YouTube');
+  const defaultVideoQuery=filter==='Манга'?'аниме манга':'аниме';
+  const effectiveVideoQuery=String(query||videoQuery||defaultVideoQuery).trim();
+  if(allowVideo&&page===1){
+    const allowYouTube=allSources||sourceFilter==='YouTube';
+    const allowVk=allSources||sourceFilter==='VK Видео';
+    if(allowYouTube){
+      if(videoCredentials.youtubeApiKey)requests.push({name:'YouTube',run:cachedVideoSearch(`youtube:${normalizeTitle(effectiveVideoQuery)}`,()=>queryYouTubeVideos({query:effectiveVideoQuery,apiKey:videoCredentials.youtubeApiKey,signal}))});
+      else skipped.push({name:'YouTube',status:'skipped',message:'Для карточек YouTube нужен API key; настройте его в настройках источника.'});
+    }
+    if(allowVk){
+      if(videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:cachedVideoSearch(`vk:${normalizeTitle(effectiveVideoQuery)}`,()=>queryVkVideos({query:effectiveVideoQuery,accessToken:videoCredentials.vkAccessToken,signal}))});
+      else skipped.push({name:'VK Видео',status:'skipped',message:'Подключите VK ID, чтобы искать видео по категории и названию.'});
+    }
   }
+  if(sourceFilter==='RuTube')skipped.push({name:'RuTube',status:'skipped',message:'В приложении есть только встроенный плеер RuTube; публичного API поиска карточек не подключено.'});
+  if(sourceFilter==='Яндекс Видео')skipped.push({name:'Яндекс Видео',status:'skipped',message:'В приложении не подключён официальный API карточек Яндекс Видео.'});
+
   const settled=await Promise.all(requests.map(async request=>({name:request.name,result:await Promise.allSettled([request.run]).then(x=>x[0])})));
   const successes=settled.filter(x=>x.result.status==='fulfilled');
   const failed=settled.filter(x=>x.result.status==='rejected');
-  if(!successes.length)throw failed[0]?.result.reason||new Error('Подключённые каталоги недоступны.');
+  if(requests.length&&!successes.length&&requests.some(request=>['AniList','MyAnimeList / Jikan','Kitsu'].includes(request.name)))throw failed[0]?.result.reason||new Error('Подключённые каталоги недоступны.');
   const sourceResults=successes.map(x=>x.result.value);
   const items=[];
   const byMalId=new Map();
@@ -209,6 +236,7 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     if(item.isAdult&&!adult&&filter!=='18+')continue;
     if(filter==='18+'&&!item.isAdult)continue;
     if(filter==='Ранобэ'&&item.type!=='Ранобэ')continue;
+    if(filter==='Видео'&&item.mediaType!=='VIDEO')continue;
     const match=item.mediaType==='VIDEO'?null:(item.malId&&byMalId.get(item.malId))||byTitle.get(`${item.mediaType}:${item.titleKey}`);
     if(match){
       match.sources=[...new Set([...(match.sources||[]),...(item.sources||[])])];
@@ -226,14 +254,14 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     byTitle.set(`${item.mediaType}:${item.titleKey}`,item);
   }
   items.sort((a,b)=>b.popularity-a.popularity);
-  const health=[...settled.map(x=>({name:x.name,status:x.result.status==='fulfilled'?'ok':'error',message:x.result.status==='rejected'?String(x.result.reason?.message||x.result.reason):''})),...videoSkipped,...(filter==='18+'?[{name:'MyAnimeList / Jikan',status:'skipped',message:'18+ запрашивается только из AniList после подтверждения возраста.'},{name:'Kitsu',status:'skipped',message:'Публичный API Kitsu не отдаёт NSFW без авторизации.'}]:[])];
+  const health=[...settled.map(x=>({name:x.name,status:x.result.status==='fulfilled'?'ok':'error',message:x.result.status==='rejected'?String(x.result.reason?.message||x.result.reason):''})),...skipped];
+  if(filter==='18+')health.push({name:'MyAnimeList / Jikan',status:'skipped',message:'18+ запрашивается только из AniList после подтверждения возраста.'},{name:'Kitsu',status:'skipped',message:'Публичный API Kitsu не отдаёт NSFW без авторизации.'});
   return {
     items,hasNext:sourceResults.some(result=>result.hasNext),
     sources:successes.map(x=>x.name),health,
     warning:failed.length?`${failed.map(x=>x.name).join(', ')} сейчас недоступен; показаны ответы остальных каталогов.`:'',
   };
 }
-
 export async function findKitsuStreaming(item,signal) {
   if(item.isAdult)return [];
   let resourceId=item.kitsuId;

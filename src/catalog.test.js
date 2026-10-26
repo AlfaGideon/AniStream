@@ -150,3 +150,43 @@ test('shows requested video adapters in the sources list separately from metadat
   assert.ok(players.has('CDN / MP4 / WebM / HLS'));
   assert.equal(players.has('AniList'), false);
 });
+
+test('searches VK by the default anime category without requiring a title query', async t => {
+  const originalFetch=globalThis.fetch;
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  let requestUrl='';
+  globalThis.fetch=async (url,options={})=>{
+    requestUrl=String(url);
+    assert.equal(options.headers.Authorization,'Bearer vk-user-token');
+    return response({response:{count:1,items:[{id:91,owner_id:-240,title:'Anime from a community',owner_name:'Anime group',duration:80,player:'https://vk.com/video_ext.php?oid=-240&id=91',image:[{url:'https://img.example/anime.jpg'}]}]}});
+  };
+  const result=await searchCatalog({filter:'Видео',sourceFilter:'VK Видео',videoCredentials:{vkAccessToken:'vk-user-token'}});
+  assert.match(requestUrl,/video\.search\?/);
+  assert.equal(new URL(requestUrl).searchParams.get('q'),'аниме');
+  assert.equal(result.items.length,1);
+  assert.equal(result.items[0].source,'VK Видео');
+  assert.equal(result.items[0].alt,'Anime group');
+  assert.deepEqual(result.sources,['VK Видео']);
+  assert.equal(result.health.find(source=>source.name==='VK Видео').status,'ok');
+});
+
+test('keeps unsupported video platforms explicit instead of falling back to another source', async t => {
+  const originalFetch=globalThis.fetch;
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  globalThis.fetch=async()=>{throw new Error('should not fetch an unintegrated platform');};
+  const result=await searchCatalog({filter:'Видео',sourceFilter:'Яндекс Видео'});
+  assert.deepEqual(result.items,[]);
+  assert.deepEqual(result.sources,[]);
+  assert.match(result.health.find(source=>source.name==='Яндекс Видео').message,/официальный API/);
+});
+
+test('reports VK permission failures as a video-source status instead of “not used” or a catalog crash', async t => {
+  const originalFetch=globalThis.fetch;
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  globalThis.fetch=async()=>response({error:{error_code:15,error_msg:'Access denied: no video.search permission'}});
+  const result=await searchCatalog({filter:'Видео',sourceFilter:'VK Видео',videoQuery:'аниме разрешение api',videoCredentials:{vkAccessToken:'vk-user-token'}});
+  assert.equal(result.items.length,0);
+  assert.equal(result.health.find(source=>source.name==='VK Видео').status,'error');
+  assert.match(result.health.find(source=>source.name==='VK Видео').message,/video\.search permission/);
+  assert.match(result.warning,/VK Видео сейчас недоступен/);
+});
