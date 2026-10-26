@@ -15,12 +15,13 @@ function withCors(response) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function cacheKey(url, method = 'GET', body = '') {
-  const normalized = new URL(url);
-  normalized.hostname = 'anistream-catalog-cache.invalid';
-  normalized.protocol = 'https:';
-  if (method === 'POST') normalized.pathname = `/anilist/${body}`;
-  return new Request(normalized.toString(), { method: 'GET' });
+function cacheKey(workerUrl, upstreamUrl, method = 'GET', body = '') {
+  const key = new URL(workerUrl);
+  const upstream = new URL(upstreamUrl);
+  key.pathname = `/_anistream_cache/${upstream.hostname}${upstream.pathname}`;
+  key.search = method === 'POST' ? `?body=${body}` : upstream.search;
+  key.hash = '';
+  return new Request(key.toString(), { method: 'GET' });
 }
 
 async function digest(text) {
@@ -32,18 +33,22 @@ async function digest(text) {
 async function cachedFetch(request, ctx, key, ttl = CACHE_SECONDS) {
   const cache = globalThis.caches?.default;
   if (cache) {
-    const hit = await cache.match(key);
-    if (hit) return hit;
+    try {
+      const hit = await cache.match(key);
+      if (hit) return hit;
+    } catch { /* Cache is best-effort; a cache miss must never break provider requests. */ }
   }
-  const upstream = await fetch(request);
+  const upstream = await fetch(request, { signal: AbortSignal.timeout(15000) });
   const headers = new Headers(upstream.headers);
   headers.set('Cache-Control', `public, max-age=${ttl}, s-maxage=${ttl}, stale-while-revalidate=86400`);
   headers.delete('Set-Cookie');
   const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers });
   if (cache && response.ok) {
-    const copy = response.clone();
-    if (ctx?.waitUntil) ctx.waitUntil(cache.put(key, copy));
-    else await cache.put(key, copy);
+    try {
+      const write = cache.put(key, response.clone()).catch(() => {});
+      if (ctx?.waitUntil) ctx.waitUntil(write);
+      else await write;
+    } catch { /* Cache is best-effort; keep returning the live provider response. */ }
   }
   return response;
 }
@@ -110,7 +115,7 @@ async function handleAnilist(request, ctx) {
     return responseJson({ error: 'unsupported_query' }, 400);
   }
   if (Number(payload.variables?.page || 1) > 500) return responseJson({ error: 'invalid_page' }, 400);
-  const key = cacheKey('https://anilist.co/api', 'POST', await digest(body));
+  const key = cacheKey(request.url, 'https://graphql.anilist.co', 'POST', await digest(body));
   try {
     const upstream = new Request('https://graphql.anilist.co', {
       method: 'POST',
@@ -123,9 +128,9 @@ async function handleAnilist(request, ctx) {
   }
 }
 
-async function handleProvider(request, ctx, upstreamRequest, url) {
+async function handleProvider(request, ctx, upstreamRequest) {
   if (request.method !== 'GET') return responseJson({ error: 'method_not_allowed' }, 405);
-  const key = cacheKey(upstreamRequest.url);
+  const key = cacheKey(request.url, upstreamRequest.url);
   try {
     return await cachedFetch(upstreamRequest, ctx, key);
   } catch (error) {
@@ -141,11 +146,11 @@ export default {
     if (url.pathname === '/api/anilist') return withCors(await handleAnilist(request, ctx));
     if (request.method !== 'GET') return withCors(responseJson({ error: 'method_not_allowed' }, 405));
     const jikan = jikanRequest(url);
-    if (jikan) return withCors(await handleProvider(request, ctx, jikan, url));
+    if (jikan) return withCors(await handleProvider(request, ctx, jikan));
     const kitsu = kitsuRequest(url);
-    if (kitsu) return withCors(await handleProvider(request, ctx, kitsu, url));
+    if (kitsu) return withCors(await handleProvider(request, ctx, kitsu));
     return withCors(responseJson({ error: 'not_found' }, 404));
   },
 };
 
-export const __test = { jikanRequest, kitsuRequest, safePage, withCors };
+export const __test = { jikanRequest, kitsuRequest, safePage, withCors, cacheKey };

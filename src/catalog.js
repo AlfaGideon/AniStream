@@ -121,7 +121,6 @@ function mapKitsu(resource, included=[]) {
     source:'Kitsu', isAdult:Boolean(a.nsfw),
     trailer:a.youtubeVideoId?{site:'YouTube',id:a.youtubeVideoId}:null,
     relations:[], popularity:a.userCount||0, titleKey:normalizeTitle(title),
-    streamingUrl:resource.relationships?.streamingLinks?.links?.related||`${KITSU_URL}/${resource.type}/${resource.id}/streaming-links?include=streamer`,
   };
 }
 
@@ -280,7 +279,6 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     const match=item.mediaType==='VIDEO'?null:(item.malId&&byMalId.get(item.malId))||byTitle.get(`${item.mediaType}:${item.titleKey}`);
     if(match){
       match.sources=[...new Set([...(match.sources||[]),...(item.sources||[])])];
-      match.streamingUrl ||= item.streamingUrl;
       match.kitsuId ||= item.kitsuId;
       if(!match.cover)match.cover=item.cover;
       if(!match.banner)match.banner=item.banner;
@@ -302,43 +300,10 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     warning:failed.length?`${failed.map(x=>`${x.name}: ${String(x.result.reason?.message||x.result.reason||'ошибка').slice(0,220)}`).join(' · ')}. Показаны результаты ответивших источников.`:'',
   };
 }
-export async function findKitsuStreaming(item,signal) {
-  if(item.isAdult)return [];
-  let resourceId=item.kitsuId;
-  let resourceType=item.mediaType==='ANIME'?'anime':'manga';
-  if(!resourceId){
-    const params=new URLSearchParams({'filter[text]':item.title,'page[limit]':'8','include':'mappings'});
-    const response=await catalogFetch('kitsu',`${KITSU_URL}/${resourceType}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
-    if(!response.ok)throw new Error(`Kitsu поиск провайдера ответил ${response.status}`);
-    const json=await response.json();
-    const candidates=json.data||[];
-    const matched=item.malId?candidates.find(candidate=>{
-      const candidateMappingIds=new Set((candidate.relationships?.mappings?.data||[]).map(ref=>ref.id));
-      return (json.included||[]).some(mapping=>mapping.type==='mappings'&&candidateMappingIds.has(mapping.id)&&mapping.attributes?.externalSite===`myanimelist/${resourceType}`&&mapping.attributes?.externalId===String(item.malId));
-    })?.id:null;
-    const fallback=candidates.find(candidate=>normalizeTitle(candidate.attributes?.canonicalTitle)===normalizeTitle(item.title))||candidates[0];
-    resourceId=matched||fallback?.id;
-  }
-  if(!resourceId)return [];
-  const url=item.streamingUrl||`${KITSU_URL}/${resourceType}/${resourceId}/streaming-links?include=streamer`;
-  const response=await catalogFetch('kitsu',url,{signal,headers:{Accept:'application/vnd.api+json'}});
-  if(!response.ok)throw new Error(`Kitsu-ссылки ответили ${response.status}`);
-  const json=await response.json();
-  const streamers=new Map((json.included||[]).filter(x=>x.type==='streamers').map(x=>[x.id,x.attributes?.siteName||'Официальный сервис']));
-  return (json.data||[]).map(link=>{
-    const raw=link.attributes?.url||'';
-    const httpsUrl=raw.replace(/^http:/i,'https:');
-    const streamerId=link.relationships?.streamer?.data?.id;
-    let name=streamers.get(streamerId)||'';
-    if(!name){try{name=new URL(httpsUrl).hostname.replace(/^www\./,'');}catch{name='Сервис просмотра';}}
-    return {name,url:httpsUrl,subs:link.attributes?.subs||[],dubs:link.attributes?.dubs||[]};
-  }).filter(link=>/^https:\/\//i.test(link.url));
-}
-
 export const SOURCE_DETAILS=[
   {name:'AniList',group:'catalog',description:'Каталог аниме, манги/ранобэ, рейтинги и связи между форматами. Только метаданные.',url:'https://anilist.co',api:ANILIST_URL},
   {name:'MyAnimeList / Jikan',group:'catalog',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
-  {name:'Kitsu',group:'catalog',description:'Каталог аниме и манги; иногда публикует официальные страницы сервисов просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
+  {name:'Kitsu',group:'catalog',description:'Только публичные метаданные аниме и манги; не предоставляет видео или главы для встроенного плеера.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
   {name:'YouTube',group:'player',statusLabel:'Нужен Data API key',statusClass:'limited',description:'При настроенном YouTube Data API key поиск видео по названию добавляется в каталог; ролики открываются в встроенном YouTube player.',url:'https://www.youtube.com'},
   {name:'VK Видео',group:'player',statusLabel:'VK ID OAuth',statusClass:'limited',description:'После авторизации через VK ID приложение запрашивает официальный video.search; доступ зависит от прав, разрешённых VK этому приложению.',url:'https://vk.com/video'},
   {name:'RuTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ссылки RuTube и открывает встроенный плеер.',url:'https://rutube.ru'},

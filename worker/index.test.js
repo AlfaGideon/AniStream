@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from './index.js';
+import worker, { __test as workerTest } from './index.js';
 
 const response = payload => new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const run = (path, init = {}) => worker.fetch(new Request(`https://worker.example${path}`, init), {}, { waitUntil() {} });
@@ -60,6 +60,29 @@ test('AniList proxy allows the catalogue query, but rejects arbitrary GraphQL re
   assert.equal(body.variables.page, 1);
   assert.equal(result.headers.get('Access-Control-Allow-Origin'), '*');
   assert.equal((await run('/api/anilist', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'mutation { deleteSomething }' }) })).status, 400);
+});
+
+test('uses same-origin cache keys and still returns provider data if the edge cache fails', async t => {
+  const originalFetch = globalThis.fetch;
+  const previousCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    if (previousCaches) Object.defineProperty(globalThis, 'caches', previousCaches);
+    else delete globalThis.caches;
+  });
+  let cacheUrl = '';
+  globalThis.caches = { default: {
+    match: async key => { cacheUrl = key.url; throw new Error('cache unavailable'); },
+    put: async () => { throw new Error('cache unavailable'); },
+  } };
+  globalThis.fetch = async () => response({ data: [{ mal_id: 7 }] });
+  const result = await run('/api/jikan/anime?page=1');
+  assert.equal(result.status, 200);
+  assert.equal(new URL(cacheUrl).hostname, 'worker.example');
+  assert.match(new URL(cacheUrl).pathname, /^\/_anistream_cache\/api\.jikan\.moe\/v4\/anime$/);
+  const postKey = workerTest.cacheKey('https://worker.example/api/anilist', 'https://graphql.anilist.co', 'POST', 'deadbeef');
+  assert.equal(new URL(postKey.url).hostname, 'worker.example');
+  assert.equal(new URL(postKey.url).searchParams.get('body'), 'deadbeef');
 });
 
 test('OPTIONS preflight is handled without contacting providers', async () => {

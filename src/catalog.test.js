@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS, catalogProxyUrl } from './catalog.js';
+import { searchCatalog, SOURCE_DETAILS, catalogProxyUrl } from './catalog.js';
 
 const response = payload => ({ ok: true, status: 200, json: async () => payload });
 
@@ -107,21 +107,6 @@ test('uses Kitsu public catalog data when it has an entry not returned by the ot
   assert.equal(result.items[0].source,'Kitsu');
   assert.deepEqual(result.items[0].sources,['Kitsu']);
   assert.equal(result.items[0].malId,1735);
-  assert.equal(result.items[0].streamingUrl,'https://kitsu.io/api/edge/anime/1555/streaming-links');
-});
-
-test('resolves official provider links and normalizes them to HTTPS', async t => {
-  const originalFetch=globalThis.fetch;
-  t.after(()=>{globalThis.fetch=originalFetch;});
-  globalThis.fetch=async url=>{
-    assert.match(String(url),/streaming-links\?include=streamer/);
-    return response({data:[{id:'971',attributes:{url:'http://www.crunchyroll.com/naruto',subs:['en'],dubs:['ja']},relationships:{streamer:{data:{id:'3'}}}}],included:[{id:'3',type:'streamers',attributes:{siteName:'Crunchyroll'}}]});
-  };
-  const links=await findKitsuStreaming({id:'kitsu-anime-1555',kitsuId:'1555',mediaType:'ANIME',streamingUrl:'https://kitsu.io/api/edge/anime/1555/streaming-links?include=streamer'});
-  assert.equal(links.length,1);
-  assert.equal(links[0].name,'Crunchyroll');
-  assert.equal(links[0].url,'https://www.crunchyroll.com/naruto');
-  assert.deepEqual(links[0].subs,['en']);
 });
 
 test('normalizes supported player URLs and rejects deceptive hosts', async () => {
