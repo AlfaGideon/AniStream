@@ -5,3 +5,4 @@ dist/
 android/.gradle/
 android/local.properties
 android/app/build/
+android/app/anistream-signing.p12

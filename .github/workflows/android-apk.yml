@@ -1,0 +1,112 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - arena/a53fe3b3-anistream
+    paths-ignore:
+      - 'releases/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v7
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4.0.4
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set monotonic app version
+        run: |
+          echo "APP_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "APP_VERSION_NAME=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "VITE_APP_VERSION_CODE=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          echo "VITE_APP_VERSION_NAME=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Prepare persistent signing key when configured
+        env:
+          ANISTREAM_KEYSTORE_BASE64: ${{ secrets.ANISTREAM_KEYSTORE_BASE64 }}
+          ANISTREAM_KEYSTORE_PASSWORD: ${{ secrets.ANISTREAM_KEYSTORE_PASSWORD }}
+          ANISTREAM_KEY_ALIAS: ${{ secrets.ANISTREAM_KEY_ALIAS }}
+          ANISTREAM_KEY_PASSWORD: ${{ secrets.ANISTREAM_KEY_PASSWORD }}
+        run: |
+          if [ -n "$ANISTREAM_KEYSTORE_BASE64" ] && [ -n "$ANISTREAM_KEYSTORE_PASSWORD" ] && [ -n "$ANISTREAM_KEY_ALIAS" ] && [ -n "$ANISTREAM_KEY_PASSWORD" ]; then
+            echo "$ANISTREAM_KEYSTORE_BASE64" | base64 --decode > android/app/anistream-signing.p12
+            echo "ANISTREAM_SIGNING_READY=true" >> "$GITHUB_ENV"
+          elif [ -z "$ANISTREAM_KEYSTORE_BASE64$ANISTREAM_KEYSTORE_PASSWORD$ANISTREAM_KEY_ALIAS$ANISTREAM_KEY_PASSWORD" ]; then
+            echo "ANISTREAM_SIGNING_READY=false" >> "$GITHUB_ENV"
+            echo "::warning::Persistent signing secrets are not configured; OTA installation is disabled until they are added."
+          else
+            echo "::error::Configure all four ANISTREAM signing secrets, or remove all partial signing secrets."
+            exit 1
+          fi
+
+      - name: Build web app and sync native project
+        run: |
+          npm ci
+          npm run build
+          npx cap sync android
+
+      - name: Build versioned APK
+        working-directory: android
+        env:
+          ANISTREAM_KEYSTORE_PASSWORD: ${{ secrets.ANISTREAM_KEYSTORE_PASSWORD }}
+          ANISTREAM_KEY_ALIAS: ${{ secrets.ANISTREAM_KEY_ALIAS }}
+          ANISTREAM_KEY_PASSWORD: ${{ secrets.ANISTREAM_KEY_PASSWORD }}
+        run: |
+          args=("-PappVersionCode=${APP_VERSION_CODE}" "-PappVersionName=${APP_VERSION_NAME}")
+          if [ "$ANISTREAM_SIGNING_READY" = "true" ]; then
+            args+=("-PsigningStoreFile=anistream-signing.p12" "-PsigningStorePassword=${ANISTREAM_KEYSTORE_PASSWORD}" "-PsigningKeyAlias=${ANISTREAM_KEY_ALIAS}" "-PsigningKeyPassword=${ANISTREAM_KEY_PASSWORD}")
+          fi
+          ./gradlew assembleDebug --no-daemon "${args[@]}"
+
+      - name: Publish versioned APK and update manifest
+        run: |
+          mkdir -p releases
+          cp android/app/build/outputs/apk/debug/app-debug.apk releases/AniStream-debug.apk
+          SHA256=$(sha256sum releases/AniStream-debug.apk | cut -d ' ' -f 1)
+          cat > releases/latest.json <<EOF
+          {
+            "versionCode": ${APP_VERSION_CODE},
+            "versionName": "${APP_VERSION_NAME}",
+            "apkUrl": "https://raw.githubusercontent.com/AlfaGideon/AniStream/arena/a53fe3b3-anistream/releases/AniStream-debug.apk",
+            "sha256": "${SHA256}",
+            "signedWithPersistentKey": ${ANISTREAM_SIGNING_READY}
+          }
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/AniStream-debug.apk releases/latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Publish AniStream ${APP_VERSION_NAME} APK"
+            git push
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AniStream-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
