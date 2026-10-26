@@ -1,3 +1,4 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { vkEmbed } from './media-links.js';
 
 const ANILIST_URL = 'https://graphql.anilist.co';
@@ -162,10 +163,16 @@ async function queryYouTubeVideos({query,apiKey,signal}) {
 }
 
 async function queryVkVideos({query,accessToken,signal}) {
-  const params=new URLSearchParams({q:query,access_token:accessToken,v:'5.199',count:'12',sort:'2',adult:'0',extended:'1'});
-  const response=await fetch(`https://api.vk.com/method/video.search?${params}`,{signal,headers:{Accept:'application/json'}});
-  const json=await response.json();
-  if(!response.ok||json.error)throw new Error(json.error?.error_msg||`VK API ответил ${response.status}`);
+  const params={q:query,v:'5.243',count:'12',sort:'2',adult:'0',extended:'1'};
+  let json,status=200;
+  if(Capacitor.isNativePlatform()){
+    const response=await CapacitorHttp.get({url:'https://api.vk.ru/method/video.search',params,headers:{Accept:'application/json',Authorization:`Bearer ${accessToken}`},connectTimeout:15000,readTimeout:20000});
+    json=response.data;status=response.status;
+  }else{
+    const response=await fetch(`https://api.vk.ru/method/video.search?${new URLSearchParams(params)}`,{signal,headers:{Accept:'application/json',Authorization:`Bearer ${accessToken}`}});
+    json=await response.json();status=response.status;
+  }
+  if(status<200||status>=300||json.error)throw new Error(json.error?.error_msg||`VK API ответил ${status}`);
   const result=json.response||{};
   return {items:(result.items||[]).filter(video=>video.id&&video.owner_id).map(video=>{
     const id=String(video.id),owner=String(video.owner_id);
@@ -187,7 +194,7 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     if(query&&page===1&&videoCredentials.youtubeApiKey)requests.push({name:'YouTube',run:queryYouTubeVideos({query,apiKey:videoCredentials.youtubeApiKey,signal})});
     else if(page===1)videoSkipped.push({name:'YouTube',status:'skipped',message:query?'Добавь YouTube Data API key в Настройки → Автопоиск видео.':'Ищется при вводе названия и наличии YouTube API key.'});
     if(query&&page===1&&videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:queryVkVideos({query,accessToken:videoCredentials.vkAccessToken,signal})});
-    else if(page===1)videoSkipped.push({name:'VK Видео',status:'skipped',message:query?'Добавь VK access token с video scope в Настройки → Автопоиск видео.':'Ищется при вводе названия и наличии VK access token.'});
+    else if(page===1)videoSkipped.push({name:'VK Видео',status:'skipped',message:query?'Подключи VK ID в Настройки → Автопоиск видео.':'Ищется при вводе названия после подключения VK ID.'});
   }
   const settled=await Promise.all(requests.map(async request=>({name:request.name,result:await Promise.allSettled([request.run]).then(x=>x[0])})));
   const successes=settled.filter(x=>x.result.status==='fulfilled');
@@ -265,7 +272,7 @@ export const SOURCE_DETAILS=[
   {name:'MyAnimeList / Jikan',group:'catalog',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
   {name:'Kitsu',group:'catalog',description:'Каталог аниме и манги; иногда публикует официальные страницы сервисов просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
   {name:'YouTube',group:'player',statusLabel:'Нужен Data API key',statusClass:'limited',description:'При настроенном YouTube Data API key поиск видео по названию добавляется в каталог; ролики открываются в встроенном YouTube player.',url:'https://www.youtube.com'},
-  {name:'VK Видео',group:'player',statusLabel:'Нужен access token',statusClass:'limited',description:'С токеном VK API с доступом video.title search возвращает отдельные ролики прямо в общий каталог; требуется публичное видео и embed-доступ.',url:'https://vk.com/video'},
+  {name:'VK Видео',group:'player',statusLabel:'VK ID OAuth',statusClass:'limited',description:'После авторизации через VK ID приложение запрашивает официальный video.search; доступ зависит от прав, разрешённых VK этому приложению.',url:'https://vk.com/video'},
   {name:'RuTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ссылки RuTube и открывает встроенный плеер.',url:'https://rutube.ru'},
   {name:'Kodik',group:'player',statusLabel:'Парсер страницы плеера',statusClass:'limited',description:'Встраивает HTTPS-страницу плеера с домена Kodik; автоматическое сканирование каталога и извлечение потоков не выполняются.',url:'https://kodik.info'},
   {name:'Jitsu / Jutsu',group:'player',statusLabel:'Нет адаптера',statusClass:'limited',description:'В этой сборке нет подтверждённого официального API/embed-интерфейса для автопоиска и воспроизведения.',url:''},

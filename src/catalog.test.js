@@ -36,13 +36,13 @@ test('adds YouTube and VK video cards to the shared catalog when local credentia
   const originalFetch=globalThis.fetch;
   t.after(()=>{globalThis.fetch=originalFetch;});
   const calls=[];
-  globalThis.fetch=async url=>{
-    const href=String(url);calls.push(href);
+  globalThis.fetch=async (url,options={})=>{
+    const href=String(url);calls.push({href,headers:options.headers||{}});
     if(href.includes('graphql.anilist.co'))return response({data:{Page:{pageInfo:{hasNextPage:false},media:[]}}});
     if(href.includes('api.jikan.moe'))return response({data:[],pagination:{has_next_page:false}});
     if(href.includes('kitsu.io'))return response({data:[],included:[],links:{}});
     if(href.includes('youtube/v3/search'))return response({items:[{id:{videoId:'abcdefghijk'},snippet:{title:'Example episode',channelTitle:'Studio',publishedAt:'2024-01-01T00:00:00Z',thumbnails:{high:{url:'https://img.example/video.jpg'}}}}]});
-    if(href.includes('api.vk.com/method/video.search'))return response({response:{count:1,items:[{id:12,owner_id:-34,title:'Another episode',owner_name:'Channel',duration:125,player:'https://vk.com/video_ext.php?oid=-34&id=12',image:[{url:'https://img.example/vk.jpg'}]}]}});
+    if(href.includes('api.vk.ru/method/video.search')){assert.equal(options.headers.Authorization,'Bearer test-token');return response({response:{count:1,items:[{id:12,owner_id:-34,title:'Another episode',owner_name:'Channel',duration:125,player:'https://vk.com/video_ext.php?oid=-34&id=12',image:[{url:'https://img.example/vk.jpg'}]}]}});}
     throw new Error(`Unexpected URL ${href}`);
   };
   const result=await searchCatalog({query:'Example title',filter:'Все',page:1,videoCredentials:{youtubeApiKey:'test-key',vkAccessToken:'test-token'}});
@@ -51,8 +51,10 @@ test('adds YouTube and VK video cards to the shared catalog when local credentia
   assert.deepEqual(new Set(videos.map(item=>item.source)),new Set(['YouTube','VK Видео']));
   assert.equal(videos.find(item=>item.source==='YouTube').videoEmbedUrl,'https://www.youtube-nocookie.com/embed/abcdefghijk?autoplay=1&rel=0');
   assert.equal(videos.find(item=>item.source==='VK Видео').videoEmbedUrl,'https://vk.com/video_ext.php?oid=-34&id=12');
-  assert.ok(calls.some(url=>url.includes('key=test-key')));
-  assert.ok(calls.some(url=>url.includes('access_token=test-token')));
+  assert.ok(calls.some(call=>call.href.includes('key=test-key')));
+  const vkCall=calls.find(call=>call.href.includes('api.vk.ru/method/video.search'));
+  assert.equal(vkCall.headers.Authorization,'Bearer test-token');
+  assert.equal(vkCall.href.includes('test-token'),false);
   assert.equal(result.health.find(source=>source.name==='YouTube').status,'ok');
   assert.equal(result.health.find(source=>source.name==='VK Видео').status,'ok');
 });
