@@ -15,6 +15,17 @@ export function youtubeEmbed(raw) {
   return /^[A-Za-z0-9_-]{11}$/.test(id)?`https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`:'';
 }
 
+export function rutubeEmbed(raw) {
+  try {
+    const url=new URL(String(raw||''));
+    const host=url.hostname.toLowerCase();
+    if(host!=='rutube.ru'&&host!=='www.rutube.ru')return '';
+    const match=url.pathname.match(/^\/(?:video|play\/embed)\/([a-z0-9-]+)\/?$/i);
+    if(!match)return '';
+    return `https://rutube.ru/play/embed/${encodeURIComponent(match[1])}`;
+  } catch { return ''; }
+}
+
 export function vkEmbed(raw) {
   try {
     const url=new URL(String(raw||''));
