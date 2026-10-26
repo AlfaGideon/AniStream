@@ -172,18 +172,23 @@ async function queryYouTubeVideos({query,apiKey,signal}) {
 }
 
 async function queryVkVideos({query,accessToken,signal}) {
-  const params={q:query,v:'5.243',count:'12',sort:'2',adult:'0',extended:'1',access_token:accessToken};
-  const body=new URLSearchParams(params).toString();
+  const params={q:query,v:'5.243',count:'12',sort:'2',adult:'0',extended:'1'};
+  const headers={Accept:'application/json',Authorization:`Bearer ${accessToken}`};
   let json,status=200;
   if(Capacitor.isNativePlatform()){
-    const response=await CapacitorHttp.post({url:'https://api.vk.ru/method/video.search',data:body,headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},responseType:'json',connectTimeout:15000,readTimeout:20000});
+    const response=await CapacitorHttp.get({url:'https://api.vk.ru/method/video.search',params,headers,connectTimeout:15000,readTimeout:20000});
     json=response.data;status=response.status;
   }else{
-    const response=await fetch('https://api.vk.ru/method/video.search',{method:'POST',body,signal,headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'}});
+    const response=await fetch(`https://api.vk.ru/method/video.search?${new URLSearchParams(params)}`,{signal,headers});
     json=await response.json();status=response.status;
   }
   if(status<200||status>=300||json.error){
     const message=json.error?.error_msg||`VK API ответил ${status}`;
+    if(Number(json.error?.error_code)===1051||/method is not available for this profile type|method is unavailable with current profile type/i.test(message)){
+      const error=new Error('VK ID успешно авторизовал пользователя, но VK API отказал в video.search: тип профиля/токена не поддерживает этот метод (1051). Это ограничение типа ключа VK API, а не VPN и не обычная настройка доступа. Повторный вход или обновление токена не исправят его.');
+      error.code='VK_METHOD_PROFILE_UNSUPPORTED';
+      throw error;
+    }
     if(/access[_ ]token.*(another|different|друг).*ip|ip.*(another|different|друг).*access[_ ]token/i.test(message)){
       const error=new Error('VK привязал access token к другому IP-адресу. Оставьте VPN подключённым к одному серверу и используйте одинаковый маршрут для AniStream и VK ID. Нажмите «Переподключить VK» в настройках и повторите поиск.');
       error.code='VK_TOKEN_IP_MISMATCH';

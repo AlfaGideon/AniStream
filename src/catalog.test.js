@@ -42,7 +42,7 @@ test('adds YouTube and VK video cards to the shared catalog when local credentia
     if(href.includes('api.jikan.moe'))return response({data:[],pagination:{has_next_page:false}});
     if(href.includes('kitsu.io'))return response({data:[],included:[],links:{}});
     if(href.includes('youtube/v3/search'))return response({items:[{id:{videoId:'abcdefghijk'},snippet:{title:'Example episode',channelTitle:'Studio',publishedAt:'2024-01-01T00:00:00Z',thumbnails:{high:{url:'https://img.example/video.jpg'}}}}]});
-    if(href.includes('api.vk.ru/method/video.search')){assert.equal(options.method,'POST');assert.equal(options.headers['Content-Type'],'application/x-www-form-urlencoded');assert.equal(new URLSearchParams(options.body).get('access_token'),'test-token');return response({response:{count:1,items:[{id:12,owner_id:-34,title:'Another episode',owner_name:'Channel',duration:125,player:'https://vk.com/video_ext.php?oid=-34&id=12',image:[{url:'https://img.example/vk.jpg'}]}]}});}
+    if(href.includes('api.vk.ru/method/video.search')){assert.equal(options.headers.Authorization,'Bearer test-token');return response({response:{count:1,items:[{id:12,owner_id:-34,title:'Another episode',owner_name:'Channel',duration:125,player:'https://vk.com/video_ext.php?oid=-34&id=12',image:[{url:'https://img.example/vk.jpg'}]}]}});}
     throw new Error(`Unexpected URL ${href}`);
   };
   const result=await searchCatalog({query:'Example title',filter:'Все',page:1,videoCredentials:{youtubeApiKey:'test-key',vkAccessToken:'test-token'}});
@@ -53,8 +53,8 @@ test('adds YouTube and VK video cards to the shared catalog when local credentia
   assert.equal(videos.find(item=>item.source==='VK Видео').videoEmbedUrl,'https://vk.com/video_ext.php?oid=-34&id=12');
   assert.ok(calls.some(call=>call.href.includes('key=test-key')));
   const vkCall=calls.find(call=>call.href.includes('api.vk.ru/method/video.search'));
-  assert.equal(new URLSearchParams(vkCall.body).get('access_token'),'test-token');
   assert.equal(vkCall.href.includes('test-token'),false);
+  assert.equal(vkCall.headers.Authorization,'Bearer test-token');
   assert.equal(result.health.find(source=>source.name==='YouTube').status,'ok');
   assert.equal(result.health.find(source=>source.name==='VK Видео').status,'ok');
 });
@@ -154,16 +154,16 @@ test('shows requested video adapters in the sources list separately from metadat
 test('searches VK by the default anime category without requiring a title query', async t => {
   const originalFetch=globalThis.fetch;
   t.after(()=>{globalThis.fetch=originalFetch;});
-  let requestUrl='',requestBody='';
+  let requestUrl='',requestHeaders={},requestParams;
   globalThis.fetch=async (url,options={})=>{
-    requestUrl=String(url);requestBody=options.body||'';
-    assert.equal(options.method,'POST');
-    assert.equal(new URLSearchParams(options.body).get('access_token'),'vk-user-token');
+    requestUrl=String(url);requestHeaders=options.headers||{};requestParams=new URL(requestUrl).searchParams;
+    assert.equal(options.method,undefined);
+    assert.equal(requestHeaders.Authorization,'Bearer vk-user-token');
     return response({response:{count:1,items:[{id:91,owner_id:-240,title:'Anime from a community',owner_name:'Anime group',duration:80,player:'https://vk.com/video_ext.php?oid=-240&id=91',image:[{url:'https://img.example/anime.jpg'}]}]}});
   };
   const result=await searchCatalog({filter:'Видео',sourceFilter:'VK Видео',videoCredentials:{vkAccessToken:'vk-user-token'}});
-  assert.match(requestUrl,/video\.search$/);
-  assert.equal(new URLSearchParams(requestBody).get('q'),'аниме');
+  assert.match(requestUrl,/video\.search\?/);
+  assert.equal(requestParams.get('q'),'аниме');
   assert.equal(result.items.length,1);
   assert.equal(result.items[0].source,'VK Видео');
   assert.equal(result.items[0].alt,'Anime group');
@@ -213,8 +213,7 @@ test('automatically refreshes a VK token once after an IP-binding error', async 
   let refreshes=0;
   globalThis.fetch=async(url,options={})=>{
     if(!String(url).includes('api.vk.ru/method/video.search'))throw new Error(`Unexpected URL ${url}`);
-    const request=new URLSearchParams(options.body);
-    tokens.push(request.get('access_token'));
+    tokens.push(options.headers.Authorization.replace('Bearer ',''));
     if(tokens.length===1)return response({error:{error_code:5,error_msg:'User authorization failed: access_token was given to another ip address.'}});
     return response({response:{count:1,items:[{id:82,owner_id:-10,title:'Found after refresh',owner_name:'Test group',duration:60,player:'https://vk.com/video_ext.php?oid=-10&id=82'}]}});
   };
@@ -240,4 +239,18 @@ test('includes actual source failure reasons in the partial-results warning', as
   assert.match(result.warning,/AniList network denied/);
   assert.match(result.warning,/Jikan HTTP 429/);
   assert.match(result.warning,/VK привязал access token к другому IP/);
+});
+
+test('does not reauthorize a VK ID token after VK error 1051 profile-type rejection', async t => {
+  const originalFetch=globalThis.fetch;
+  t.after(()=>{globalThis.fetch=originalFetch;});
+  let refreshCalls=0;
+  globalThis.fetch=async()=>response({error:{error_code:1051,error_msg:'Method is not available for this profile type: method is unavailable with current profile type.'}});
+  const result=await searchCatalog({filter:'Видео',sourceFilter:'VK Видео',videoQuery:'аниме profile type',videoCredentials:{vkAccessToken:'vkid-token'},refreshVkAccessToken:async()=>{refreshCalls++;return 'another-token';}});
+  const health=result.health.find(source=>source.name==='VK Видео');
+  assert.equal(result.items.length,0);
+  assert.equal(refreshCalls,0);
+  assert.equal(health.status,'error');
+  assert.match(health.message,/тип профиля\/токена не поддерживает этот метод/);
+  assert.match(result.warning,/тип профиля\/токена не поддерживает этот метод/);
 });
