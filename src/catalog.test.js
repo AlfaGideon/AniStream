@@ -95,3 +95,12 @@ test('normalizes YouTube IDs and public VK video URLs to embeddable player URLs'
   assert.equal(rutubeEmbed('https://rutube.ru/play/embed/1a2b3c4d5e6f77889900112233445566'), 'https://rutube.ru/play/embed/1a2b3c4d5e6f77889900112233445566');
   assert.equal(rutubeEmbed('https://rutube.ru.evil.example/video/1a2b3c4d5e6f77889900112233445566'), '');
 });
+
+test('builds an in-app VK Video search from a title without requiring a pasted link', async () => {
+  const { vkVideoSearchUrl } = await import('./video-search.js');
+  const url = new URL(vkVideoSearchUrl('Атака титанов'));
+  assert.equal(url.origin, 'https://vk.com');
+  assert.equal(url.pathname, '/video');
+  assert.equal(url.searchParams.get('q'), 'Атака титанов');
+  assert.equal(vkVideoSearchUrl('  '), '');
+});
