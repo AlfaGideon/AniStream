@@ -1,3 +1,5 @@
+import { vkEmbed } from './media-links.js';
+
 const ANILIST_URL = 'https://graphql.anilist.co';
 const JIKAN_URL = 'https://api.jikan.moe/v4';
 const KITSU_URL = 'https://kitsu.io/api/edge';
@@ -141,13 +143,51 @@ async function queryKitsu({query,filter,page,signal}) {
   return {items:results.flatMap(result=>result.items),hasNext:results.some(result=>result.hasNext)};
 }
 
-export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal}) {
+function videoDuration(seconds=0) {
+  const value=Number(seconds)||0;
+  if(!value)return 'Видео';
+  const hours=Math.floor(value/3600),minutes=Math.floor(value%3600/60),remaining=value%60;
+  return hours?`${hours}:${String(minutes).padStart(2,'0')}:${String(remaining).padStart(2,'0')}`:`${minutes}:${String(remaining).padStart(2,'0')}`;
+}
+
+async function queryYouTubeVideos({query,apiKey,signal}) {
+  const params=new URLSearchParams({part:'snippet',q:query,type:'video',maxResults:'12',safeSearch:'strict',key:apiKey});
+  const response=await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`,{signal,headers:{Accept:'application/json'}});
+  const json=await response.json();
+  if(!response.ok)throw new Error(json.error?.message||`YouTube Data API ответил ${response.status}`);
+  return {items:(json.items||[]).filter(entry=>entry.id?.videoId).map(entry=>{
+    const id=entry.id.videoId,snippet=entry.snippet||{};
+    return {id:`youtube-video-${id}`,title:cleanText(snippet.title||'Видео YouTube'),alt:cleanText(snippet.channelTitle||''),type:'Видео',mediaType:'VIDEO',format:'YouTube',year:snippet.publishedAt?.slice(0,4)||'—',rating:'—',episodes:'Видео',genres:[cleanText(snippet.channelTitle||'YouTube')],label:'YOUTUBE',cover:snippet.thumbnails?.high?.url||snippet.thumbnails?.medium?.url||snippet.thumbnails?.default?.url||'',banner:'',description:cleanText(snippet.description||''),url:`https://www.youtube.com/watch?v=${encodeURIComponent(id)}`,videoEmbedUrl:`https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&rel=0`,source:'YouTube',sources:['YouTube'],isAdult:false,trailer:null,relations:[],popularity:0,titleKey:normalizeTitle(snippet.title||id)};
+  }),hasNext:false};
+}
+
+async function queryVkVideos({query,accessToken,signal}) {
+  const params=new URLSearchParams({q:query,access_token:accessToken,v:'5.199',count:'12',sort:'2',adult:'0',extended:'1'});
+  const response=await fetch(`https://api.vk.com/method/video.search?${params}`,{signal,headers:{Accept:'application/json'}});
+  const json=await response.json();
+  if(!response.ok||json.error)throw new Error(json.error?.error_msg||`VK API ответил ${response.status}`);
+  const result=json.response||{};
+  return {items:(result.items||[]).filter(video=>video.id&&video.owner_id).map(video=>{
+    const id=String(video.id),owner=String(video.owner_id);
+    const candidate=video.player||`https://vk.com/video_ext.php?oid=${encodeURIComponent(owner)}&id=${encodeURIComponent(id)}${video.access_key?`&hash=${encodeURIComponent(video.access_key)}`:''}`;
+    const player=vkEmbed(candidate);
+    const images=video.image||video.first_frame||[];
+    return {id:`vk-video-${owner}-${id}`,title:cleanText(video.title||'Видео VK'),alt:cleanText(video.owner_name||''),type:'Видео',mediaType:'VIDEO',format:'VK Видео',year:'—',rating:'—',episodes:videoDuration(video.duration),genres:[cleanText(video.owner_name||'VK Видео')],label:'VK ВИДЕО',cover:images.at?.(-1)?.url||images.at?.(-1)?.with_padding||video.photo_320||'',banner:'',description:cleanText(video.description||''),url:`https://vk.com/video${owner}_${id}`,videoEmbedUrl:player,source:'VK Видео',sources:['VK Видео'],isAdult:false,trailer:null,relations:[],popularity:Number(video.views)||0,titleKey:normalizeTitle(video.title||id)};
+  }).filter(video=>video.videoEmbedUrl),hasNext:false};
+}
+
+export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal,videoCredentials={}}) {
   const requests=[
     {name:'AniList',run:queryAniList({query,filter,adult:filter==='18+'&&adult,page,signal})},
   ];
+  const videoSkipped=[];
   if(filter!=='18+'){
     requests.push({name:'MyAnimeList / Jikan',run:queryJikan({query,filter,page,signal})});
     requests.push({name:'Kitsu',run:queryKitsu({query,filter,page,signal})});
+    if(query&&page===1&&videoCredentials.youtubeApiKey)requests.push({name:'YouTube',run:queryYouTubeVideos({query,apiKey:videoCredentials.youtubeApiKey,signal})});
+    else if(page===1)videoSkipped.push({name:'YouTube',status:'skipped',message:query?'Добавь YouTube Data API key в Настройки → Автопоиск видео.':'Ищется при вводе названия и наличии YouTube API key.'});
+    if(query&&page===1&&videoCredentials.vkAccessToken)requests.push({name:'VK Видео',run:queryVkVideos({query,accessToken:videoCredentials.vkAccessToken,signal})});
+    else if(page===1)videoSkipped.push({name:'VK Видео',status:'skipped',message:query?'Добавь VK access token с video scope в Настройки → Автопоиск видео.':'Ищется при вводе названия и наличии VK access token.'});
   }
   const settled=await Promise.all(requests.map(async request=>({name:request.name,result:await Promise.allSettled([request.run]).then(x=>x[0])})));
   const successes=settled.filter(x=>x.result.status==='fulfilled');
@@ -158,11 +198,13 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
   const byMalId=new Map();
   const byTitle=new Map();
   for(const item of sourceResults.flatMap(result=>result.items)){
+    item.sources=[...new Set([...(item.sources||[]),item.source].filter(Boolean))];
     if(item.isAdult&&!adult&&filter!=='18+')continue;
     if(filter==='18+'&&!item.isAdult)continue;
     if(filter==='Ранобэ'&&item.type!=='Ранобэ')continue;
-    const match=(item.malId&&byMalId.get(item.malId))||byTitle.get(`${item.mediaType}:${item.titleKey}`);
+    const match=item.mediaType==='VIDEO'?null:(item.malId&&byMalId.get(item.malId))||byTitle.get(`${item.mediaType}:${item.titleKey}`);
     if(match){
+      match.sources=[...new Set([...(match.sources||[]),...(item.sources||[])])];
       match.streamingUrl ||= item.streamingUrl;
       match.kitsuId ||= item.kitsuId;
       if(!match.cover)match.cover=item.cover;
@@ -177,7 +219,7 @@ export async function searchCatalog({query='',filter='Все',adult=false,page=1
     byTitle.set(`${item.mediaType}:${item.titleKey}`,item);
   }
   items.sort((a,b)=>b.popularity-a.popularity);
-  const health=[...settled.map(x=>({name:x.name,status:x.result.status==='fulfilled'?'ok':'error',message:x.result.status==='rejected'?String(x.result.reason?.message||x.result.reason):''})),...(filter==='18+'?[{name:'MyAnimeList / Jikan',status:'skipped',message:'18+ запрашивается только из AniList после подтверждения возраста.'},{name:'Kitsu',status:'skipped',message:'Публичный API Kitsu не отдаёт NSFW без авторизации.'}]:[])];
+  const health=[...settled.map(x=>({name:x.name,status:x.result.status==='fulfilled'?'ok':'error',message:x.result.status==='rejected'?String(x.result.reason?.message||x.result.reason):''})),...videoSkipped,...(filter==='18+'?[{name:'MyAnimeList / Jikan',status:'skipped',message:'18+ запрашивается только из AniList после подтверждения возраста.'},{name:'Kitsu',status:'skipped',message:'Публичный API Kitsu не отдаёт NSFW без авторизации.'}]:[])];
   return {
     items,hasNext:sourceResults.some(result=>result.hasNext),
     sources:successes.map(x=>x.name),health,
@@ -222,8 +264,8 @@ export const SOURCE_DETAILS=[
   {name:'AniList',group:'catalog',description:'Каталог аниме, манги/ранобэ, рейтинги и связи между форматами. Только метаданные.',url:'https://anilist.co',api:ANILIST_URL},
   {name:'MyAnimeList / Jikan',group:'catalog',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
   {name:'Kitsu',group:'catalog',description:'Каталог аниме и манги; иногда публикует официальные страницы сервисов просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
-  {name:'YouTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ID и ссылки на видео, которые разрешено встраивать.',url:'https://www.youtube.com'},
-  {name:'VK Видео',group:'player',statusLabel:'Автопоиск по названию',statusClass:'supported',description:'Встроенный поиск VK по названию; результаты показываются в окне AniStream, если VK разрешает iframe.',url:'https://vk.com/video'},
+  {name:'YouTube',group:'player',statusLabel:'Нужен Data API key',statusClass:'limited',description:'При настроенном YouTube Data API key поиск видео по названию добавляется в каталог; ролики открываются в встроенном YouTube player.',url:'https://www.youtube.com'},
+  {name:'VK Видео',group:'player',statusLabel:'Нужен access token',statusClass:'limited',description:'С токеном VK API с доступом video.title search возвращает отдельные ролики прямо в общий каталог; требуется публичное видео и embed-доступ.',url:'https://vk.com/video'},
   {name:'RuTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ссылки RuTube и открывает встроенный плеер.',url:'https://rutube.ru'},
   {name:'Kodik',group:'player',statusLabel:'Парсер страницы плеера',statusClass:'limited',description:'Встраивает HTTPS-страницу плеера с домена Kodik; автоматическое сканирование каталога и извлечение потоков не выполняются.',url:'https://kodik.info'},
   {name:'Jitsu / Jutsu',group:'player',statusLabel:'Нет адаптера',statusClass:'limited',description:'В этой сборке нет подтверждённого официального API/embed-интерфейса для автопоиска и воспроизведения.',url:''},
