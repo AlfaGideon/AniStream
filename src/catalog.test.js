@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchCatalog, findKitsuStreaming } from './catalog.js';
+import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS } from './catalog.js';
 
 const response = payload => ({ ok: true, status: 200, json: async () => payload });
 const anilistItem = ({ id=1, idMal=77, isAdult=false }={}) => ({
@@ -84,8 +84,8 @@ test('resolves official provider links and normalizes them to HTTPS', async t =>
   assert.deepEqual(links[0].subs,['en']);
 });
 
-test('normalizes YouTube IDs and public VK video URLs to embeddable player URLs', async () => {
-  const { youtubeEmbed, vkEmbed, rutubeEmbed } = await import('./media-links.js');
+test('normalizes supported player URLs and rejects deceptive hosts', async () => {
+  const { youtubeEmbed, vkEmbed, rutubeEmbed, kodikEmbed, amediaEmbed } = await import('./media-links.js');
   assert.equal(youtubeEmbed('https://youtu.be/1dy2zPPrKD0?t=3'), 'https://www.youtube-nocookie.com/embed/1dy2zPPrKD0?autoplay=1&rel=0');
   assert.equal(youtubeEmbed('https://www.youtube.com/watch?v=1dy2zPPrKD0'), 'https://www.youtube-nocookie.com/embed/1dy2zPPrKD0?autoplay=1&rel=0');
   assert.equal(youtubeEmbed('https://youtube.com.evil.example/watch?v=1dy2zPPrKD0'), '');
@@ -94,6 +94,12 @@ test('normalizes YouTube IDs and public VK video URLs to embeddable player URLs'
   assert.equal(rutubeEmbed('https://rutube.ru/video/1a2b3c4d5e6f77889900112233445566/'), 'https://rutube.ru/play/embed/1a2b3c4d5e6f77889900112233445566');
   assert.equal(rutubeEmbed('https://rutube.ru/play/embed/1a2b3c4d5e6f77889900112233445566'), 'https://rutube.ru/play/embed/1a2b3c4d5e6f77889900112233445566');
   assert.equal(rutubeEmbed('https://rutube.ru.evil.example/video/1a2b3c4d5e6f77889900112233445566'), '');
+  assert.equal(kodikEmbed('https://kodik.info/serial/123'), 'https://kodik.info/serial/123');
+  assert.equal(kodikEmbed('https://player.kodik.biz/embed/123'), 'https://player.kodik.biz/embed/123');
+  assert.equal(kodikEmbed('https://kodik.info.evil.example/serial/123'), '');
+  assert.equal(amediaEmbed('https://www.amediateka.ru/watch/123'), 'https://www.amediateka.ru/watch/123');
+  assert.equal(amediaEmbed('http://amediateka.ru/watch/123'), '');
+  assert.equal(amediaEmbed('https://amediateka.ru.evil.example/watch/123'), '');
 });
 
 test('builds an in-app VK Video search from a title without requiring a pasted link', async () => {
@@ -103,4 +109,13 @@ test('builds an in-app VK Video search from a title without requiring a pasted l
   assert.equal(url.pathname, '/video');
   assert.equal(url.searchParams.get('q'), 'Атака титанов');
   assert.equal(vkVideoSearchUrl('  '), '');
+});
+
+test('shows requested video adapters in the sources list separately from metadata APIs', () => {
+  const players = new Map(SOURCE_DETAILS.filter(source => source.group === 'player').map(source => [source.name, source.statusLabel]));
+  assert.ok(players.has('VK Видео'));
+  assert.ok(players.has('Kodik'));
+  assert.ok(players.has('Amediateka'));
+  assert.ok(players.has('CDN / MP4 / WebM / HLS'));
+  assert.equal(players.has('AniList'), false);
 });

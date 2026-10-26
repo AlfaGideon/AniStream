@@ -219,8 +219,15 @@ export async function findKitsuStreaming(item,signal) {
 }
 
 export const SOURCE_DETAILS=[
-  {name:'AniList',description:'Каталог аниме, манги/ранобэ, рейтинги и связи между форматами. Только метаданные.',url:'https://anilist.co',api:ANILIST_URL},
-  {name:'MyAnimeList / Jikan',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
-  {name:'Kitsu',description:'Каталог аниме и манги; для карточек аниме API также публикует ссылки на платформы просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
-  {name:'YouTube',description:'Официальные трейлеры и встроенные видео, если каталог предоставляет ID ролика.',url:'https://www.youtube.com'},
+  {name:'AniList',group:'catalog',description:'Каталог аниме, манги/ранобэ, рейтинги и связи между форматами. Только метаданные.',url:'https://anilist.co',api:ANILIST_URL},
+  {name:'MyAnimeList / Jikan',group:'catalog',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
+  {name:'Kitsu',group:'catalog',description:'Каталог аниме и манги; иногда публикует официальные страницы сервисов просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
+  {name:'YouTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ID и ссылки на видео, которые разрешено встраивать.',url:'https://www.youtube.com'},
+  {name:'VK Видео',group:'player',statusLabel:'Автопоиск по названию',statusClass:'supported',description:'Встроенный поиск VK по названию; результаты показываются в окне AniStream, если VK разрешает iframe.',url:'https://vk.com/video'},
+  {name:'RuTube',group:'player',statusLabel:'Embed-парсер',statusClass:'supported',description:'Распознаёт публичные ссылки RuTube и открывает встроенный плеер.',url:'https://rutube.ru'},
+  {name:'Kodik',group:'player',statusLabel:'Парсер страницы плеера',statusClass:'limited',description:'Встраивает HTTPS-страницу плеера с домена Kodik; автоматическое сканирование каталога и извлечение потоков не выполняются.',url:'https://kodik.info'},
+  {name:'Jitsu / Jutsu',group:'player',statusLabel:'Нет адаптера',statusClass:'limited',description:'В этой сборке нет подтверждённого официального API/embed-интерфейса для автопоиска и воспроизведения.',url:''},
+  {name:'Amediateka',group:'player',statusLabel:'Официальный плеер',statusClass:'limited',description:'Встраивает только официальный HTTPS URL; может потребоваться подписка, вход и разрешение сервиса на iframe.',url:'https://www.amediateka.ru'},
+  {name:'CDN / MP4 / WebM / HLS',group:'player',statusLabel:'Прямой поток',statusClass:'supported',description:'HTML5 video для прямых MP4/WebM и HLS через hls.js. CDN — доставка потока, а не каталог для поиска.',url:''},
+  {name:'Яндекс Видео',group:'player',statusLabel:'Агрегатор поиска',statusClass:'limited',description:'Индексирует страницы разных сайтов; сам не предоставляет единый поток или embed-плеер.',url:'https://yandex.ru/video'},
 ];

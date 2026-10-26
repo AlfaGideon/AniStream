@@ -26,6 +26,22 @@ export function rutubeEmbed(raw) {
   } catch { return ''; }
 }
 
+function trustedPlayerUrl(raw, hostPattern) {
+  try {
+    const url=new URL(String(raw||''));
+    if(url.protocol!=='https:'||url.username||url.password||!hostPattern.test(url.hostname.toLowerCase()))return '';
+    return url.toString();
+  } catch { return ''; }
+}
+
+export function kodikEmbed(raw) {
+  return trustedPlayerUrl(raw,/(^|\.)kodik\.(info|biz|cc|tv|club|site)$/);
+}
+
+export function amediaEmbed(raw) {
+  return trustedPlayerUrl(raw,/(^|\.)amediateka\.ru$/);
+}
+
 export function vkEmbed(raw) {
   try {
     const url=new URL(String(raw||''));
