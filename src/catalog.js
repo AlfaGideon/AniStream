@@ -8,6 +8,21 @@ const PAGE_SIZE = 18;
 const VIDEO_CACHE_TTL = 5 * 60 * 1000;
 const videoSearchCache = new Map();
 
+export function catalogProxyUrl(provider,url,base=import.meta.env?.VITE_CATALOG_API_URL||'') {
+  const apiBase=String(base||'').trim().replace(/\/+$/,'');
+  if(!apiBase)return url;
+  const parsed=new URL(url);
+  let endpoint='';
+  if(provider==='anilist'&&parsed.hostname==='graphql.anilist.co')endpoint='/api/anilist';
+  else if(provider==='jikan'&&parsed.hostname==='api.jikan.moe')endpoint=`/api/jikan${parsed.pathname.replace(/^\/v4/,'')}${parsed.search}`;
+  else if(provider==='kitsu'&&parsed.hostname==='kitsu.io'&&parsed.pathname.startsWith('/api/edge/'))endpoint=`/api/kitsu${parsed.pathname.replace(/^\/api\/edge/,'')}${parsed.search}`;
+  return endpoint?`${apiBase}${endpoint}`:url;
+}
+
+function catalogFetch(provider,url,options={}) {
+  return fetch(catalogProxyUrl(provider,url),options);
+}
+
 const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:MediaType, $format:MediaFormat, $isAdult:Boolean!) {
   Page(page:$page, perPage:${PAGE_SIZE}) {
     pageInfo { currentPage hasNextPage total }
@@ -113,7 +128,7 @@ function mapKitsu(resource, included=[]) {
 async function queryAniList({query,filter,adult,page,signal}) {
   const type=filter==='Аниме'?'ANIME':['Манга','Ранобэ'].includes(filter)?'MANGA':null;
   const format=filter==='Ранобэ'?'NOVEL':null;
-  const response=await fetch(ANILIST_URL,{method:'POST',signal,headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:MEDIA_QUERY,variables:{page,search:query||null,type,format,isAdult:Boolean(adult)}})});
+  const response=await catalogFetch('anilist',ANILIST_URL,{method:'POST',signal,headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:MEDIA_QUERY,variables:{page,search:query||null,type,format,isAdult:Boolean(adult)}})});
   if(!response.ok)throw new Error(`AniList ответил ${response.status}`);
   const json=await response.json();
   if(json.errors?.length)throw new Error(json.errors[0].message||'Ошибка AniList API');
@@ -128,7 +143,7 @@ async function queryJikan({query,filter,page,signal}) {
     const params=new URLSearchParams({page:String(page),limit:String(PAGE_SIZE),order_by:'members',sort:'desc',sfw:'true'});
     if(query)params.set('q',query);
     if(filter==='Ранобэ'&&kind==='manga')params.set('type','lightnovel');
-    const response=await fetch(`${JIKAN_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/json'}});
+    const response=await catalogFetch('jikan',`${JIKAN_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/json'}});
     if(response.status===429)throw new Error('MyAnimeList/Jikan временно ограничил запросы. Подождите несколько секунд.');
     if(!response.ok)throw new Error(`Jikan ответил ${response.status}`);
     const json=await response.json();
@@ -144,7 +159,7 @@ async function queryKitsu({query,filter,page,signal}) {
     const params=new URLSearchParams({'page[limit]':String(PAGE_SIZE),'page[offset]':String((page-1)*PAGE_SIZE),'sort':'-userCount','include':'categories,mappings'});
     if(query)params.set('filter[text]',query);
     if(filter==='Ранобэ'&&kind==='manga')params.set('filter[subtype]','lightnovel');
-    const response=await fetch(`${KITSU_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
+    const response=await catalogFetch('kitsu',`${KITSU_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
     if(response.status===429)throw new Error('Kitsu временно ограничил запросы. Попробуйте ещё раз через несколько секунд.');
     if(!response.ok)throw new Error(`Kitsu ответил ${response.status}`);
     const json=await response.json();
@@ -293,7 +308,7 @@ export async function findKitsuStreaming(item,signal) {
   let resourceType=item.mediaType==='ANIME'?'anime':'manga';
   if(!resourceId){
     const params=new URLSearchParams({'filter[text]':item.title,'page[limit]':'8','include':'mappings'});
-    const response=await fetch(`${KITSU_URL}/${resourceType}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
+    const response=await catalogFetch('kitsu',`${KITSU_URL}/${resourceType}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
     if(!response.ok)throw new Error(`Kitsu поиск провайдера ответил ${response.status}`);
     const json=await response.json();
     const candidates=json.data||[];
@@ -306,7 +321,7 @@ export async function findKitsuStreaming(item,signal) {
   }
   if(!resourceId)return [];
   const url=item.streamingUrl||`${KITSU_URL}/${resourceType}/${resourceId}/streaming-links?include=streamer`;
-  const response=await fetch(url,{signal,headers:{Accept:'application/vnd.api+json'}});
+  const response=await catalogFetch('kitsu',url,{signal,headers:{Accept:'application/vnd.api+json'}});
   if(!response.ok)throw new Error(`Kitsu-ссылки ответили ${response.status}`);
   const json=await response.json();
   const streamers=new Map((json.included||[]).filter(x=>x.type==='streamers').map(x=>[x.id,x.attributes?.siteName||'Официальный сервис']));

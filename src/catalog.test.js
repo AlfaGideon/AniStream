@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS } from './catalog.js';
+import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS, catalogProxyUrl } from './catalog.js';
 
 const response = payload => ({ ok: true, status: 200, json: async () => payload });
+
+test('routes public metadata API requests through the configured Worker only for approved providers', () => {
+  const base = 'https://anistream-catalog-api.example.workers.dev/';
+  assert.equal(catalogProxyUrl('anilist', 'https://graphql.anilist.co', base), `${base.slice(0,-1)}/api/anilist`);
+  assert.equal(catalogProxyUrl('jikan', 'https://api.jikan.moe/v4/anime?page=2', base), `${base.slice(0,-1)}/api/jikan/anime?page=2`);
+  assert.equal(catalogProxyUrl('kitsu', 'https://kitsu.io/api/edge/anime/42/streaming-links?include=streamer', base), `${base.slice(0,-1)}/api/kitsu/anime/42/streaming-links?include=streamer`);
+  assert.equal(catalogProxyUrl('vk', 'https://api.vk.ru/method/video.search', base), 'https://api.vk.ru/method/video.search');
+  assert.equal(catalogProxyUrl('kitsu', 'https://evil.example/api/edge/anime', base), 'https://evil.example/api/edge/anime');
+});
 const anilistItem = ({ id=1, idMal=77, isAdult=false }={}) => ({
   id, idMal, type: 'ANIME', format: 'TV', siteUrl: `https://anilist.co/anime/${id}`,
   description: '<b>A live catalog description.</b>', episodes: 12, chapters: null, volumes: null,

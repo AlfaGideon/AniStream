@@ -8,6 +8,12 @@
 - Встроенный плеер запускает поиск VK Видео по названию внутри приложения; умеет встраивать публичные YouTube/VK/RuTube URL, HTTPS-страницы плееров Kodik/Amediateka и прямые CDN MP4/WebM/HLS URL. Поиск VK открывает страницу результатов во встроенном окне; пользователь выбирает ролик там, URL копировать не нужно. Доступность самого iframe контролируется сервисом. Для Kodik/Amediateka сейчас поддерживается только разрешённая страница плеера, а не автоматический обход их каталогов; защищённые потоки не извлекаются.
 - Встроенная локальная читалка открывает изображения и CBZ/ZIP главы с устройства. Каталоги/платформы чтения открываются внешней ссылкой; веб-скрейпинг Remanga не реализован.
 
+## Каталоговый backend
+
+Для публичных метаданных приложение использует Cloudflare Worker (`worker/index.js`): он проксирует только разрешённые запросы к AniList, Jikan и Kitsu и кэширует их ответы на edge до 10 минут. Worker нужен как настоящий runtime backend; GitHub Pages раздаёт только статические файлы и backend не заменяет.
+
+GitHub Actions разворачивает Worker перед Android-сборкой и подставляет полученный `workers.dev` URL в приложение. Для этого репозиторию нужны Actions secrets `CLOUDFLARE_ACCOUNT_ID` и `CLOUDFLARE_API_TOKEN` (права токена — Edit Cloudflare Workers). Секреты используются только во время деплоя и не вшиваются в APK. VK-токен пользователя Worker не получает: запросы VK остаются прямыми, а ограничение VK API `1051` backend обойти не может. Поиск YouTube по-прежнему требует пользовательский YouTube API key.
+
 ## OTA и подпись APK
 
 В настройках Android есть проверка `releases/latest.json`, загрузка APK с GitHub, сверка SHA-256 и запуск системного установщика. GitHub Actions увеличивает `versionCode` на каждом запуске и обновляет APK-манифест.
@@ -39,4 +45,4 @@ npx cap sync android
 cd android && ./gradlew assembleDebug
 ```
 
-Актуальная debug-сборка: [AniStream-debug.apk](https://raw.githubusercontent.com/AlfaGideon/AniStream/arena/a53fe3b3-anistream/releases/AniStream-debug.apk).
+Актуальная debug-сборка: [AniStream-debug.apk](https://raw.githubusercontent.com/AlfaGideon/AniStream/arena/ab870bd3-anistream/releases/AniStream-debug.apk).

@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "cap:sync": "cap sync android",
     "cap:open": "cap open android",
-    "test": "node --test src/catalog.test.js"
+    "test": "node --test src/catalog.test.js worker/index.test.js"
   },
   "dependencies": {
     "@capacitor/android": "^7.4.3",
@@ -23,6 +23,7 @@
     "vite": "^6.0.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.4.3"
+    "@capacitor/cli": "^7.4.3",
+    "wrangler": "^4.152.0"
   }
 }

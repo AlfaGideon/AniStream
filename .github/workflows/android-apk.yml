@@ -3,7 +3,8 @@ name: Build Android APK
 on:
   push:
     branches:
-      - arena/a53fe3b3-anistream
+      - arena/ab870bd3-anistream
+      - main
     paths-ignore:
       - 'releases/**'
   workflow_dispatch:
@@ -62,9 +63,30 @@ jobs:
             exit 1
           fi
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy public catalog backend
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::Add CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN as GitHub Actions repository secrets."
+            exit 1
+          fi
+          set -o pipefail
+          npx wrangler deploy 2>&1 | tee /tmp/anistream-wrangler-deploy.log
+          WORKER_URL=$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' /tmp/anistream-wrangler-deploy.log | tail -n 1)
+          if [ -z "$WORKER_URL" ]; then
+            echo "::error::Cloudflare deployment succeeded without reporting a workers.dev URL. Check the Wrangler deploy log."
+            exit 1
+          fi
+          echo "VITE_CATALOG_API_URL=$WORKER_URL" >> "$GITHUB_ENV"
+          echo "Deployed catalog backend: $WORKER_URL"
+
       - name: Build web app and sync native project
         run: |
-          npm ci
           npm run build
           npx cap sync android
 
@@ -90,7 +112,7 @@ jobs:
           {
             "versionCode": ${APP_VERSION_CODE},
             "versionName": "${APP_VERSION_NAME}",
-            "apkUrl": "https://raw.githubusercontent.com/AlfaGideon/AniStream/arena/a53fe3b3-anistream/releases/AniStream-debug.apk",
+            "apkUrl": "https://raw.githubusercontent.com/AlfaGideon/AniStream/${GITHUB_REF_NAME}/releases/AniStream-debug.apk",
             "sha256": "${SHA256}",
             "signedWithPersistentKey": ${ANISTREAM_SIGNING_READY}
           }
