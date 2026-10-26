@@ -1,7 +1,7 @@
 {
-  "versionCode": 11,
-  "versionName": "0.1.11",
+  "versionCode": 12,
+  "versionName": "0.1.12",
   "apkUrl": "https://raw.githubusercontent.com/AlfaGideon/AniStream/arena/a53fe3b3-anistream/releases/AniStream-debug.apk",
-  "sha256": "aae55a30dfc18a99703c85ba12ce35f8a986142acff5dbcd80172eba1fa57cc0",
+  "sha256": "35deff8ac125f1b05013f20f2c197a8d31f6212a74261b87c894f67f05011c11",
   "signedWithPersistentKey": true
 }
