@@ -83,3 +83,12 @@ test('resolves official provider links and normalizes them to HTTPS', async t =>
   assert.equal(links[0].url,'https://www.crunchyroll.com/naruto');
   assert.deepEqual(links[0].subs,['en']);
 });
+
+test('normalizes YouTube IDs and public VK video URLs to embeddable player URLs', async () => {
+  const { youtubeEmbed, vkEmbed } = await import('./media-links.js');
+  assert.equal(youtubeEmbed('https://youtu.be/1dy2zPPrKD0?t=3'), 'https://www.youtube-nocookie.com/embed/1dy2zPPrKD0?autoplay=1&rel=0');
+  assert.equal(youtubeEmbed('https://www.youtube.com/watch?v=1dy2zPPrKD0'), 'https://www.youtube-nocookie.com/embed/1dy2zPPrKD0?autoplay=1&rel=0');
+  assert.equal(youtubeEmbed('https://youtube.com.evil.example/watch?v=1dy2zPPrKD0'), '');
+  assert.equal(vkEmbed('https://vk.com/video-123_456'), 'https://vk.com/video_ext.php?oid=-123&id=456');
+  assert.equal(vkEmbed('https://evil.example/video-123_456'), '');
+});

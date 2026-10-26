@@ -1,11 +1,14 @@
 import './style.css';
 import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS } from './catalog.js';
+import { APP_VERSION, APP_BUILD, checkForUpdate, installUpdate } from './app-update.js';
+import { youtubeEmbed, vkEmbed } from './media-links.js';
 
 const state = {
   page: 'home', query: '', filter: 'Аниме', adult: false, pendingFilter: null,
   items: [], saved: new Map(), modal: null, loading: true, searchPending: false,
   error: '', warning: '', hasNext: false, pageNum: 1, sources: [], sourceHealth: [], requestId: 0,
-  providerLinks: [], providerStatus: 'idle', providerError: '',
+  providerLinks: [], providerStatus: 'idle', providerError: '', updateCheck: null,
+  reader: { itemId: '', pages: [], index: 0, loading: false, error: '' },
   settings: { autoplay: false, quality: 'Авто', theme: 'Тёмная', blur: true, notifications: true },
 };
 const app = document.querySelector('#app');
@@ -131,7 +134,7 @@ function externalSources(item) {
 function renderModal() {
   const m=state.modal;
   if (!m) return '';
-  if (m.type==='settings') return `<div class="modal-backdrop" data-dismiss><section class="modal settings-modal" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="modal-overline">ПЕРСОНАЛИЗАЦИЯ</div><h2>Настройки</h2></div><button class="close-btn" data-close>${icon('close')}</button></div><div class="settings-layout"><nav class="settings-tabs"><button class="selected">${icon('settings',17)} Общие</button><button>${icon('play',17)} Воспроизведение</button><button>${icon('bell',17)} Уведомления</button><button>${icon('bookmark',17)} Приватность</button></nav><div class="settings-body"><div class="setting-group"><h3>Внешний вид</h3><div class="setting-row"><div><b>Тема оформления</b><small>Выберите комфортный режим</small></div><select data-setting="theme"><option ${state.settings.theme==='Тёмная'?'selected':''}>Тёмная</option><option ${state.settings.theme==='Системная'?'selected':''}>Системная</option><option ${state.settings.theme==='Светлая'?'selected':''}>Светлая</option></select></div><div class="setting-row"><div><b>Размывать карточки 18+</b><small>Блюр превью даже после подтверждения возраста</small></div><button class="switch ${state.settings.blur?'on':''}" data-toggle="blur"><i></i></button></div></div><div class="setting-group"><h3>Воспроизведение</h3><div class="setting-row"><div><b>Качество видео</b><small>Применяется на сайте провайдера</small></div><select data-setting="quality"><option>Авто</option><option>1080p</option><option>720p</option><option>480p</option></select></div><div class="setting-row"><div><b>Следующая серия автоматически</b><small>Доступно у выбранного видеосервиса</small></div><button class="switch ${state.settings.autoplay?'on':''}" data-toggle="autoplay"><i></i></button></div></div><div class="setting-group"><h3>Безопасность</h3><div class="setting-row"><div><b>Категория 18+</b><small>${state.adult?'Возраст подтверждён на этом устройстве':'Скрыта до подтверждения возраста'}</small></div><button class="secondary-btn small" data-adult>${state.adult?'Отключить':'Подтвердить 18+'}</button></div></div><div class="settings-note">Избранное, возраст и настройки хранятся локально на этом устройстве.</div></div></div><div class="modal-footer"><button class="text-link" data-reset>Сбросить настройки</button><button class="primary-btn" data-close>Готово</button></div></section></div>`;
+  if (m.type==='settings') return `<div class="modal-backdrop" data-dismiss><section class="modal settings-modal" role="dialog" aria-modal="true"><div class="modal-head"><div><div class="modal-overline">ПЕРСОНАЛИЗАЦИЯ</div><h2>Настройки</h2></div><button class="close-btn" data-close>${icon('close')}</button></div><div class="settings-layout"><nav class="settings-tabs"><button class="selected">${icon('settings',17)} Общие</button><button>${icon('play',17)} Воспроизведение</button><button>${icon('bell',17)} Уведомления</button><button>${icon('bookmark',17)} Приватность</button></nav><div class="settings-body"><div class="setting-group"><h3>Внешний вид</h3><div class="setting-row"><div><b>Тема оформления</b><small>Выберите комфортный режим</small></div><select data-setting="theme"><option ${state.settings.theme==='Тёмная'?'selected':''}>Тёмная</option><option ${state.settings.theme==='Системная'?'selected':''}>Системная</option><option ${state.settings.theme==='Светлая'?'selected':''}>Светлая</option></select></div><div class="setting-row"><div><b>Размывать карточки 18+</b><small>Блюр превью даже после подтверждения возраста</small></div><button class="switch ${state.settings.blur?'on':''}" data-toggle="blur"><i></i></button></div></div><div class="setting-group"><h3>Воспроизведение</h3><div class="setting-row"><div><b>Качество видео</b><small>Применяется на сайте провайдера</small></div><select data-setting="quality"><option>Авто</option><option>1080p</option><option>720p</option><option>480p</option></select></div><div class="setting-row"><div><b>Следующая серия автоматически</b><small>Доступно у выбранного видеосервиса</small></div><button class="switch ${state.settings.autoplay?'on':''}" data-toggle="autoplay"><i></i></button></div></div><div class="setting-group"><h3>Безопасность</h3><div class="setting-row"><div><b>Категория 18+</b><small>${state.adult?'Возраст подтверждён на этом устройстве':'Скрыта до подтверждения возраста'}</small></div><button class="secondary-btn small" data-adult>${state.adult?'Отключить':'Подтвердить 18+'}</button></div></div><div class="setting-group update-group"><h3>Обновление приложения</h3><div class="setting-row"><div><b>AniStream ${esc(APP_VERSION)}</b><small>Сборка ${APP_BUILD} · OTA через GitHub</small></div><button class="secondary-btn small" data-check-updates ${state.updateCheck?.status==='checking'?'disabled':''}>${state.updateCheck?.status==='checking'?'Проверяем…':'Проверить'}</button></div>${state.updateCheck?.status==='checked'?`<div class="update-result ${state.updateCheck.available?'available':''}">${state.updateCheck.available?`Доступна версия ${esc(state.updateCheck.latestVersion)} (сборка ${state.updateCheck.latestBuild}).`:'У вас установлена последняя версия.'}</div>`:''}${state.updateCheck?.status==='error'?`<div class="update-result update-error">${esc(state.updateCheck.message)}</div>`:''}${state.updateCheck?.available&&!state.updateCheck.signedWithPersistentKey?'<div class="update-result update-error">GitHub ещё не настроен на постоянную подпись APK. Для установки поверх текущей версии добавь signing secrets в репозиторий; без них Android потребует удалить старую версию.</div>':''}${state.updateCheck?.notice?`<div class="update-result">${esc(state.updateCheck.notice)}</div>`:''}${state.updateCheck?.available&&state.updateCheck.signedWithPersistentKey?`<button class="primary-btn update-install" data-install-update>Скачать и установить ${esc(state.updateCheck.latestVersion)} ${icon('chevron',15)}</button>`:''}<small class="update-note">Android запросит подтверждение установки. Для обновления поверх текущей версии подпись APK должна совпадать.</small></div><div class="settings-note">Избранное, возраст и настройки хранятся локально на этом устройстве.</div></div></div><div class="modal-footer"><button class="text-link" data-reset>Сбросить настройки</button><button class="primary-btn" data-close>Готово</button></div></section></div>`;
   if (m.type==='age') return `<div class="modal-backdrop"><section class="modal age-modal" role="dialog" aria-modal="true"><button class="close-btn age-close" data-close>${icon('close')}</button><div class="age-icon">18<span>+</span></div><div class="modal-overline">ПОДТВЕРЖДЕНИЕ ВОЗРАСТА</div><h2>Вам уже исполнилось 18 лет?</h2><p>Откроется только метаданный раздел AniList, помеченный как 18+. Видеофайлы и изображения для взрослых AniStream не загружает. Карточки останутся размытыми, если включена соответствующая настройка.</p><div class="age-actions"><button class="secondary-btn" data-close>Нет, вернуться</button><button class="primary-btn" data-confirm-age>Да, мне есть 18</button></div><small>Доступ можно в любой момент отключить в настройках.</small></section></div>`;
   if (m.type==='title') {
     const t=m.item; const backdrop=safeUrl(t.banner)||safeUrl(t.cover);
@@ -143,7 +146,7 @@ function renderModal() {
     const t=m.item;
     const providers=state.providerLinks;
     const providerState=state.providerStatus==='loading'?'<div class="provider-loading"><span class="loader"></span>Проверяем ссылки платформ в Kitsu…</div>':state.providerStatus==='error'?`<div class="provider-error">${esc(state.providerError)}</div>`:providers.length?`<div class="provider-links">${providers.map(link=>`<a class="primary-btn" target="_blank" rel="noreferrer" href="${esc(link.url)}">${esc(link.name)} ↗<small>${esc([...link.subs.map(x=>`субтитры: ${x}`),...link.dubs.map(x=>`дубляж: ${x}`)].join(' · ')||'ссылка из каталога Kitsu')}</small></a>`).join('')}</div>`:'<p class="provider-empty">Kitsu не вернул ссылок просмотра для этого тайтла. Ниже — поиск у официальных платформ.</p>';
-    return `<div class="modal-backdrop" data-dismiss><section class="modal player-modal" role="dialog" aria-modal="true"><div class="player-top"><span class="player-brand">${icon('play',16)} AniStream <i>·</i> ${esc(t.title)}</span><button class="close-btn" data-close>${icon('close')}</button></div><div class="owned-player"><video id="owned-video" controls playsinline preload="metadata" poster="/hero-cinematic.jpg"></video><div class="owned-player-empty"><span>${icon(t.mediaType==='ANIME'?'play':'book',28)}</span><b>Свой HTML5-плеер</b><small>Смотрите собственные файлы или разрешённые прямые потоки MP4 / WebM / HLS</small></div></div><form class="player-url-form" data-player-form><label for="media-url">Прямая ссылка на видео (не страница сайта)</label><div><input id="media-url" type="url" inputmode="url" placeholder="https://ваш-домен/episode.m3u8" required><button class="primary-btn" type="submit">Открыть в плеере ${icon('play',15)}</button></div><small>Указывайте только URL контента, на воспроизведение которого у вас есть права.</small></form><div class="provider-panel compact-provider"><span class="modal-overline">ССЫЛКИ ПЛАТФОРМ ИЗ KITSU</span><h2>${t.mediaType==='ANIME'?'Доступность просмотра':'Официальные ссылки и каталоги'}</h2><p>Это ссылки на страницы платформ из каталога Kitsu, не встроенные видеопотоки. Доступность зависит от региона и прав сервиса.</p>${providerState}<div class="provider-links provider-fallback">${externalSources(t).map(([name,url])=>`<a class="secondary-btn small" target="_blank" rel="noreferrer" href="${esc(url)}">Поиск: ${esc(name)} ↗</a>`).join('')}</div><a class="provider-source" target="_blank" rel="noreferrer" href="${esc(safeUrl(t.url))}">Карточка: ${esc(t.source)} ↗</a></div></section></div>`;
+    return `<div class="modal-backdrop" data-dismiss><section class="modal player-modal" role="dialog" aria-modal="true"><div class="player-top"><span class="player-brand">${icon('play',16)} AniStream <i>·</i> ${esc(t.title)}</span><button class="close-btn" data-close>${icon('close')}</button></div><div class="owned-player"><video id="owned-video" controls playsinline preload="metadata" poster="/hero-cinematic.jpg"></video><div id="media-embed" class="media-embed"></div><div class="owned-player-empty"><span>${icon(t.mediaType==='ANIME'?'play':'book',28)}</span><b>Плеер AniStream</b><small>Вставь ссылку на разрешённое видео YouTube, VK или прямой MP4 / WebM / HLS-поток</small></div></div><form class="player-url-form" data-player-form><label for="media-url">Ссылка на YouTube/VK или прямой URL видео</label><div class="player-url-row"><select id="media-source" aria-label="Источник"><option value="auto">Авто</option><option value="youtube">YouTube</option><option value="vk">VK Видео</option><option value="direct">Прямой поток</option></select><input id="media-url" type="text" inputmode="url" placeholder="YouTube URL/ID, VK embed или прямой URL" required><button class="primary-btn" type="submit">Открыть ${icon('play',15)}</button></div><div class="media-error" role="status"></div><small>Встраиваются видео, доступные для публичного воспроизведения. Используй материалы, на показ которых есть права; AniStream не ищет и не скачивает чужие копии.</small></form>${t.mediaType==='ANIME'?'':mangaReader(t)}<div class="provider-panel compact-provider"><span class="modal-overline">ССЫЛКИ ПЛАТФОРМ ИЗ KITSU</span><h2>${t.mediaType==='ANIME'?'Доступность просмотра':'Официальные ссылки и каталоги'}</h2><p>Это ссылки на страницы платформ из каталога Kitsu, не встроенные видеопотоки. Доступность зависит от региона и прав сервиса.</p>${providerState}<div class="provider-links provider-fallback">${externalSources(t).map(([name,url])=>`<a class="secondary-btn small" target="_blank" rel="noreferrer" href="${esc(url)}">Поиск: ${esc(name)} ↗</a>`).join('')}</div><a class="provider-source" target="_blank" rel="noreferrer" href="${esc(safeUrl(t.url))}">Карточка: ${esc(t.source)} ↗</a></div></section></div>`;
   }
   if (m.type==='trailer') {
     const t=m.item, embed=trailerUrl(t), youtube='https://www.youtube.com/results?search_query='+encodeURIComponent(`${t.title} official trailer`);
@@ -186,19 +189,71 @@ function bind() {
   document.querySelector('[data-retry]')?.addEventListener('click',()=>loadCatalog(true));
   document.querySelector('[data-load-more]')?.addEventListener('click',()=>loadCatalog(false));
   document.querySelector('[data-source-check]')?.addEventListener('click',()=>loadCatalog(true));
+  document.querySelector('[data-check-updates]')?.addEventListener('click',runUpdateCheck);
+  document.querySelector('[data-install-update]')?.addEventListener('click',installLatestUpdate);
   document.querySelector('[data-player-form]')?.addEventListener('submit',e=>{
-    e.preventDefault();
-    const input=document.querySelector('#media-url'); const url=safeUrl(input?.value);
-    const video=document.querySelector('#owned-video');
-    if(!url||!video)return;
-    video.src=url; video.load(); video.play().catch(()=>{});
-    video.classList.add('is-playing');
-    document.querySelector('.owned-player-empty')?.classList.add('is-hidden');
+    e.preventDefault(); playProvidedMedia();
   });
+  document.querySelector('[data-reader-files]')?.addEventListener('change',loadLocalManga);
+  document.querySelectorAll('[data-reader-step]').forEach(el=>el.addEventListener('click',()=>{
+    const total=state.reader.pages.length;
+    state.reader.index=Math.max(0,Math.min(total-1,state.reader.index+Number(el.dataset.readerStep)));
+    render();
+  }));
   document.querySelectorAll('[data-info]').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();state.modal={type:'info',key:el.dataset.info};render();}));
   const input=document.querySelector('#search');
   input?.addEventListener('input',e=>{state.query=e.target.value;state.page='catalog';state.filter='Все';state.searchPending=true;state.error='';render();clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadCatalog(true),450);});
 }
+function mangaReader(item) {
+  const active=state.reader.itemId===item.id?state.reader:{itemId:'',pages:[],index:0,loading:false,error:''};
+  const page=active.pages[active.index];
+  return `<section class="local-reader"><span class="modal-overline">ЛОКАЛЬНАЯ ЧИТАЛКА</span><h3>Свои страницы / CBZ-архив</h3><p>Открой изображения или CBZ/ZIP-файл, полученный законно. Страницы обрабатываются только на устройстве.</p><label class="secondary-btn small reader-pick">Выбрать страницы или архив<input type="file" accept="image/*,.cbz,.zip" multiple data-reader-files></label>${active.loading?'<div class="provider-loading"><span class="loader"></span>Открываем главы…</div>':''}${active.error?`<div class="provider-error">${esc(active.error)}</div>`:''}${page?`<div class="manga-reader-view"><button class="secondary-btn small" data-reader-step="-1" ${active.index===0?'disabled':''}>${icon('back',17)}</button><img src="${esc(page.url)}" alt="Страница ${active.index+1}"/><button class="secondary-btn small" data-reader-step="1" ${active.index===active.pages.length-1?'disabled':''}>${icon('chevron',17)}</button></div><div class="reader-page-count">Страница ${active.index+1} из ${active.pages.length} · ${esc(page.name)}</div>`:''}</section>`;
+}
+async function loadLocalManga(event) {
+  const files=Array.from(event.target.files||[]);
+  if(!files.length)return;
+  for(const page of state.reader.pages)URL.revokeObjectURL(page.url);
+  state.reader={itemId:state.modal?.item?.id||'',pages:[],index:0,loading:true,error:''};render();
+  try {
+    const pages=[];
+    for(const file of files){
+      if(/\.(cbz|zip)$/i.test(file.name)){
+        const JSZip=(await import('jszip')).default;const archive=await JSZip.loadAsync(file);
+        const images=Object.values(archive.files).filter(entry=>!entry.dir&&/\.(jpe?g|png|webp|gif|avif)$/i.test(entry.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true,sensitivity:'base'}));
+        for(const entry of images){const blob=await entry.async('blob');pages.push({name:entry.name,url:URL.createObjectURL(blob)});}
+      } else if(file.type.startsWith('image/')) pages.push({name:file.name,url:URL.createObjectURL(file)});
+    }
+    state.reader={itemId:state.modal?.item?.id||'',pages,index:0,loading:false,error:pages.length?'':'В файле не найдено поддерживаемых изображений.'};
+  } catch(error) { state.reader={itemId:state.modal?.item?.id||'',pages:[],index:0,loading:false,error:`Не удалось открыть файл: ${error.message||'ошибка архива'}`}; }
+  render();
+}
+async function playProvidedMedia() {
+  const input=document.querySelector('#media-url'),selector=document.querySelector('#media-source');
+  const message=document.querySelector('.media-error'); const raw=input?.value.trim()||''; const mode=selector?.value||'auto';
+  const video=document.querySelector('#owned-video'),embed=document.querySelector('#media-embed');
+  if(!raw||!video||!embed)return;
+  if(activeHls){activeHls.destroy();activeHls=null;}
+  video.pause();video.removeAttribute('src');video.load();video.style.display='none';embed.replaceChildren();
+  let iframeUrl='';
+  if(mode==='youtube'||mode==='auto')iframeUrl=youtubeEmbed(raw);
+  if(!iframeUrl&&(mode==='vk'||mode==='auto'))iframeUrl=vkEmbed(raw);
+  if(iframeUrl){
+    const frame=document.createElement('iframe');frame.src=iframeUrl;frame.title='Встроенный видеоплеер';frame.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';frame.allowFullscreen=true;frame.referrerPolicy='strict-origin-when-cross-origin';embed.append(frame);embed.style.display='block';
+  } else {
+    const url=safeUrl(raw);
+    if(!url){if(message)message.textContent='Вставь корректную HTTPS-ссылку или ID YouTube-видео.';return;}
+    if(mode==='youtube'||mode==='vk'){if(message)message.textContent=mode==='youtube'?'Не удалось распознать YouTube ID/ссылку.':'Для VK вставь ссылку video_ext.php или публичную ссылку на видео.';return;}
+    embed.style.display='none';video.style.display='block';
+    if(/\.m3u8(?:$|[?#])/i.test(url)){
+      try { const Hls=(await import('hls.js')).default;if(Hls.isSupported()){activeHls=new Hls();activeHls.loadSource(url);activeHls.attachMedia(video);activeHls.on(Hls.Events.ERROR,(_,data)=>{if(data.fatal&&message)message.textContent='HLS-поток не удалось воспроизвести. Проверь CORS и прямую ссылку.';});}else{video.src=url;video.load();} } catch {video.src=url;video.load();}
+    } else {video.src=url;video.load();}
+    video.play().catch(()=>{});
+  }
+  document.querySelector('.owned-player-empty')?.classList.add('is-hidden');
+  if(message)message.textContent='';
+}
+let activeHls=null;
+
 async function loadProviderLinks(item) {
   try {
     const links=await findKitsuStreaming(item);
@@ -237,6 +292,23 @@ async function loadCatalog(reset=true) {
     if(request===state.requestId){state.loading=false;render();}
   }
 }
+async function runUpdateCheck() {
+  state.updateCheck={status:'checking'};render();
+  try { state.updateCheck={status:'checked',...await checkForUpdate()}; }
+  catch(error) { state.updateCheck={status:'error',message:error.message||'Не удалось проверить GitHub.'}; }
+  render();
+}
+async function installLatestUpdate() {
+  const update=state.updateCheck;
+  if(!update?.available)return;
+  state.updateCheck={...update,notice:'Подготовка APK…'};render();
+  try {
+    const result=await installUpdate({apkUrl:update.apkUrl,sha256:update.sha256});
+    state.updateCheck={...update,notice:result.permissionRequired?'Разреши AniStream устанавливать неизвестные приложения в настройках Android, вернись сюда и снова нажми «Скачать и установить».':'Установщик Android открыт. Подтверди обновление в системном окне.'};
+  } catch(error) { state.updateCheck={...update,notice:`Не удалось установить APK: ${error.message||'ошибка'}`}; }
+  render();
+}
+
 function keyShortcuts(e) {
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();document.querySelector('#search')?.focus();}
   if(e.key==='Escape'&&state.modal){state.modal=null;render();}
