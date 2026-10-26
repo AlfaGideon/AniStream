@@ -1,5 +1,6 @@
 const ANILIST_URL = 'https://graphql.anilist.co';
 const JIKAN_URL = 'https://api.jikan.moe/v4';
+const KITSU_URL = 'https://kitsu.io/api/edge';
 const PAGE_SIZE = 18;
 
 const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:MediaType, $format:[MediaFormat], $isAdult:Boolean!) {
@@ -15,11 +16,10 @@ const MEDIA_QUERY = `query AniStreamCatalog($page:Int!, $search:String, $type:Me
   }
 }`;
 
-const JIKAN_QUERY = `anime,manga,novel,lightnovel,manhwa,manhua`;
-
-function text(value='') {
+function cleanText(value='') {
   return String(value).replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, ' ').trim();
 }
+function normalizeTitle(value='') { return cleanText(value).toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
 
 function mapAniList(media) {
   const isNovel = media.type === 'MANGA' && ['NOVEL', 'LIGHT_NOVEL'].includes(media.format);
@@ -30,8 +30,7 @@ function mapAniList(media) {
     title: edge.node.title?.userPreferred || edge.node.title?.romaji || 'Связанная история',
     relation: edge.relationType?.replaceAll('_', ' ').toLowerCase() || 'Связано',
     kind: edge.node.type === 'ANIME' ? 'Аниме' : ['NOVEL', 'LIGHT_NOVEL'].includes(edge.node.format) ? 'Ранобэ' : 'Манга',
-    url: edge.node.siteUrl,
-    image: edge.node.coverImage?.medium || '',
+    url: edge.node.siteUrl, image: edge.node.coverImage?.medium || '',
   }));
   return {
     id: `anilist-${media.id}`, anilistId: media.id, malId: media.idMal || null,
@@ -41,10 +40,10 @@ function mapAniList(media) {
     episodes: media.type === 'ANIME' ? `${media.episodes || '?'} серий` : `${media.volumes || '?'} томов`,
     genres: media.genres || [], label: media.isAdult ? '18+' : media.averageScore >= 85 ? 'ВЫСОКИЙ РЕЙТИНГ' : kind.toUpperCase(),
     cover: media.coverImage?.extraLarge || media.coverImage?.large || '', banner: media.bannerImage || '',
-    description: text(media.description || 'Описание пока не добавлено.'),
+    description: cleanText(media.description || 'Описание пока не добавлено.'),
     url: media.siteUrl, source: 'AniList', isAdult: Boolean(media.isAdult),
     trailer: media.trailer?.id ? { site: media.trailer.site, id: media.trailer.id } : null,
-    relations: related, popularity: media.popularity || 0,
+    relations: related, popularity: media.popularity || 0, titleKey: normalizeTitle(title),
   };
 }
 
@@ -62,82 +61,166 @@ function mapJikan(item, kind) {
     genres: (item.genres || []).map(g => g.name),
     label: item.score >= 8.5 ? 'ВЫСОКИЙ РЕЙТИНГ' : kind === 'anime' ? 'АНИМЕ' : isNovel ? 'РАНОБЭ' : 'МАНГА',
     cover: item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || '', banner: '',
-    description: text(item.synopsis || 'Описание пока не добавлено.'),
+    description: cleanText(item.synopsis || 'Описание пока не добавлено.'),
     url: item.url, source: 'MyAnimeList · Jikan', isAdult: false,
     trailer: item.trailer?.youtube_id ? { site: 'YouTube', id: item.trailer.youtube_id } : null,
-    relations: [], popularity: item.members || 0,
+    relations: [], popularity: item.members || 0, titleKey: normalizeTitle(title),
   };
 }
 
-async function queryAniList({ query, filter, adult, page, signal }) {
-  const type = filter === 'Аниме' ? 'ANIME' : ['Манга', 'Ранобэ'].includes(filter) ? 'MANGA' : null;
-  const format = filter === 'Ранобэ' ? ['NOVEL'] : null;
-  const variables = { page, search: query || null, type, format, isAdult: Boolean(adult) };
-  const response = await fetch(ANILIST_URL, {
-    method: 'POST', signal,
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ query: MEDIA_QUERY, variables }),
-  });
-  if (!response.ok) throw new Error(`AniList ответил ${response.status}`);
-  const json = await response.json();
-  if (json.errors?.length) throw new Error(json.errors[0].message || 'Ошибка AniList API');
-  const result = json.data?.Page;
-  return { items: (result?.media || []).map(mapAniList), hasNext: Boolean(result?.pageInfo?.hasNextPage) };
+function mapKitsu(resource, included=[]) {
+  const a=resource.attributes||{};
+  const isAnime=resource.type==='anime';
+  const mediaType=isAnime?'ANIME':'MANGA';
+  const subtype=String(a.subtype||'').toLowerCase();
+  const isNovel=!isAnime&&['novel','lightnovel','light novel'].includes(subtype);
+  const title=a.titles?.en||a.titles?.en_jp||a.canonicalTitle||a.titles?.ja_jp||'Без названия';
+  const categoryIds=new Set((resource.relationships?.categories?.data||[]).map(x=>x.id));
+  const genres=included.filter(x=>x.type==='categories'&&categoryIds.has(x.id)).map(x=>x.attributes?.title).filter(Boolean).slice(0,5);
+  const mappings=included.filter(x=>x.type==='mappings'&&x.attributes?.externalSite?.startsWith('myanimelist/'));
+  const malMapping=mappings.find(x=>x.attributes.externalSite===`myanimelist/${isAnime?'anime':'manga'}`);
+  const rating=Number(a.averageRating||0);
+  return {
+    id:`kitsu-${resource.type}-${resource.id}`, kitsuId:resource.id, malId:malMapping?Number(malMapping.attributes.externalId)||null:null,
+    anilistId:null, title, alt:a.titles?.en_jp||a.titles?.ja_jp||title,
+    type:a.nsfw?'18+':isAnime?'Аниме':isNovel?'Ранобэ':'Манга', mediaType, format:a.subtype||'',
+    year:a.startDate?.slice(0,4)||'—', rating:rating?(rating/10).toFixed(1):'—',
+    episodes:isAnime?`${a.episodeCount||'?'} серий`:`${a.volumeCount||'?'} томов`,
+    genres, label:a.nsfw?'18+':isAnime?'ANIME':isNovel?'РАНОБЭ':'MANGA',
+    cover:a.posterImage?.large||a.posterImage?.original||a.posterImage?.medium||'',
+    banner:a.coverImage?.large||a.coverImage?.original||'',
+    description:cleanText(a.synopsis||a.description||'Описание пока не добавлено.'),
+    url:`https://kitsu.io/${isAnime?'anime':'manga'}/${encodeURIComponent(a.slug||resource.id)}`,
+    source:'Kitsu', isAdult:Boolean(a.nsfw),
+    trailer:a.youtubeVideoId?{site:'YouTube',id:a.youtubeVideoId}:null,
+    relations:[], popularity:a.userCount||0, titleKey:normalizeTitle(title),
+    streamingUrl:resource.relationships?.streamingLinks?.links?.related||`${KITSU_URL}/${resource.type}/${resource.id}/streaming-links?include=streamer`,
+  };
 }
 
-async function queryJikan({ query, filter, page, signal }) {
-  if (filter === '18+' || !['Все', 'Аниме', 'Манга', 'Ранобэ'].includes(filter)) return { items: [], hasNext: false };
-  const kinds = filter === 'Аниме' ? ['anime'] : filter === 'Манга' || filter === 'Ранобэ' ? ['manga'] : ['anime', 'manga'];
-  const results = await Promise.all(kinds.map(async kind => {
-    const params = new URLSearchParams({ page: String(page), limit: '18', order_by: 'members', sort: 'desc', sfw: 'true' });
-    if (query) params.set('q', query);
-    if (filter === 'Ранобэ' && kind === 'manga') params.set('type', 'lightnovel');
-    const response = await fetch(`${JIKAN_URL}/${kind}?${params}`, { signal, headers: { Accept: 'application/json' } });
-    if (response.status === 429) throw new Error('MyAnimeList/Jikan временно ограничил запросы. Подождите несколько секунд.');
-    if (!response.ok) throw new Error(`Jikan ответил ${response.status}`);
-    const json = await response.json();
-    return { items: (json.data || []).map(item => mapJikan(item, kind)), hasNext: Boolean(json.pagination?.has_next_page) };
+async function queryAniList({query,filter,adult,page,signal}) {
+  const type=filter==='Аниме'?'ANIME':['Манга','Ранобэ'].includes(filter)?'MANGA':null;
+  const format=filter==='Ранобэ'?['NOVEL']:null;
+  const response=await fetch(ANILIST_URL,{method:'POST',signal,headers:{'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({query:MEDIA_QUERY,variables:{page,search:query||null,type,format,isAdult:Boolean(adult)}})});
+  if(!response.ok)throw new Error(`AniList ответил ${response.status}`);
+  const json=await response.json();
+  if(json.errors?.length)throw new Error(json.errors[0].message||'Ошибка AniList API');
+  const result=json.data?.Page;
+  return {items:(result?.media||[]).map(mapAniList),hasNext:Boolean(result?.pageInfo?.hasNextPage)};
+}
+
+async function queryJikan({query,filter,page,signal}) {
+  if(filter==='18+'||!['Все','Аниме','Манга','Ранобэ'].includes(filter))return {items:[],hasNext:false};
+  const kinds=filter==='Аниме'?['anime']:filter==='Манга'||filter==='Ранобэ'?['manga']:['anime','manga'];
+  const results=await Promise.all(kinds.map(async kind=>{
+    const params=new URLSearchParams({page:String(page),limit:String(PAGE_SIZE),order_by:'members',sort:'desc',sfw:'true'});
+    if(query)params.set('q',query);
+    if(filter==='Ранобэ'&&kind==='manga')params.set('type','lightnovel');
+    const response=await fetch(`${JIKAN_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/json'}});
+    if(response.status===429)throw new Error('MyAnimeList/Jikan временно ограничил запросы. Подождите несколько секунд.');
+    if(!response.ok)throw new Error(`Jikan ответил ${response.status}`);
+    const json=await response.json();
+    return {items:(json.data||[]).map(item=>mapJikan(item,kind)),hasNext:Boolean(json.pagination?.has_next_page)};
   }));
-  return { items: results.flatMap(result => result.items), hasNext: results.some(result => result.hasNext) };
+  return {items:results.flatMap(result=>result.items),hasNext:results.some(result=>result.hasNext)};
 }
 
-export async function searchCatalog({ query='', filter='Все', adult=false, page=1, signal }) {
-  const tasks = [queryAniList({ query, filter, adult: filter === '18+' ? true : false, page, signal })];
-  if (filter !== '18+') tasks.push(queryJikan({ query, filter, page, signal }));
-  const results = await Promise.allSettled(tasks);
-  const failed = results.filter(result => result.status === 'rejected');
-  const successes = results.filter(result => result.status === 'fulfilled').map(result => result.value);
-  if (!successes.length) throw failed[0]?.reason || new Error('Источники временно недоступны.');
+async function queryKitsu({query,filter,page,signal}) {
+  if(filter==='18+'||!['Все','Аниме','Манга','Ранобэ'].includes(filter))return {items:[],hasNext:false};
+  const kinds=filter==='Аниме'?['anime']:['Манга','Ранобэ'].includes(filter)?['manga']:['anime','manga'];
+  const results=await Promise.all(kinds.map(async kind=>{
+    const params=new URLSearchParams({'page[limit]':String(PAGE_SIZE),'page[offset]':String((page-1)*PAGE_SIZE),'sort':'-userCount','include':'categories,mappings'});
+    if(query)params.set('filter[text]',query);
+    if(filter==='Ранобэ'&&kind==='manga')params.set('filter[subtype]','lightnovel');
+    const response=await fetch(`${KITSU_URL}/${kind}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
+    if(response.status===429)throw new Error('Kitsu временно ограничил запросы. Попробуйте ещё раз через несколько секунд.');
+    if(!response.ok)throw new Error(`Kitsu ответил ${response.status}`);
+    const json=await response.json();
+    return {items:(json.data||[]).map(item=>mapKitsu(item,json.included||[])),hasNext:Boolean(json.links?.next)};
+  }));
+  return {items:results.flatMap(result=>result.items),hasNext:results.some(result=>result.hasNext)};
+}
 
-  const byMalId = new Map();
-  const items = [];
-  for (const item of successes.flatMap(result => result.items)) {
-    if (item.isAdult && !adult && filter !== '18+') continue;
-    if (filter === '18+' && !item.isAdult) continue;
-    if (filter === 'Ранобэ' && item.type !== 'Ранобэ') continue;
-    const existing = item.malId ? byMalId.get(item.malId) : null;
-    if (existing) {
-      if (item.source === 'AniList') {
-        const index = items.indexOf(existing);
-        if (index >= 0) items[index] = item;
-        byMalId.set(item.malId, item);
-      }
+export async function searchCatalog({query='',filter='Все',adult=false,page=1,signal}) {
+  const requests=[
+    {name:'AniList',run:queryAniList({query,filter,adult:filter==='18+'&&adult,page,signal})},
+  ];
+  if(filter!=='18+'){
+    requests.push({name:'MyAnimeList / Jikan',run:queryJikan({query,filter,page,signal})});
+    requests.push({name:'Kitsu',run:queryKitsu({query,filter,page,signal})});
+  }
+  const settled=await Promise.all(requests.map(async request=>({name:request.name,result:await Promise.allSettled([request.run]).then(x=>x[0])})));
+  const successes=settled.filter(x=>x.result.status==='fulfilled');
+  const failed=settled.filter(x=>x.result.status==='rejected');
+  if(!successes.length)throw failed[0]?.result.reason||new Error('Подключённые каталоги недоступны.');
+  const sourceResults=successes.map(x=>x.result.value);
+  const items=[];
+  const byMalId=new Map();
+  const byTitle=new Map();
+  for(const item of sourceResults.flatMap(result=>result.items)){
+    if(item.isAdult&&!adult&&filter!=='18+')continue;
+    if(filter==='18+'&&!item.isAdult)continue;
+    if(filter==='Ранобэ'&&item.type!=='Ранобэ')continue;
+    const match=(item.malId&&byMalId.get(item.malId))||byTitle.get(`${item.mediaType}:${item.titleKey}`);
+    if(match){
+      match.streamingUrl ||= item.streamingUrl;
+      match.kitsuId ||= item.kitsuId;
+      if(!match.cover)match.cover=item.cover;
+      if(!match.banner)match.banner=item.banner;
+      if(!match.trailer)match.trailer=item.trailer;
+      if(!match.genres?.length)match.genres=item.genres;
+      if(item.malId)byMalId.set(item.malId,match);
       continue;
     }
     items.push(item);
-    if (item.malId) byMalId.set(item.malId, item);
+    if(item.malId)byMalId.set(item.malId,item);
+    byTitle.set(`${item.mediaType}:${item.titleKey}`,item);
   }
-  items.sort((a, b) => b.popularity - a.popularity);
+  items.sort((a,b)=>b.popularity-a.popularity);
+  const health=[...settled.map(x=>({name:x.name,status:x.result.status==='fulfilled'?'ok':'error',message:x.result.status==='rejected'?String(x.result.reason?.message||x.result.reason):''})),...(filter==='18+'?[{name:'MyAnimeList / Jikan',status:'skipped',message:'18+ запрашивается только из AniList после подтверждения возраста.'},{name:'Kitsu',status:'skipped',message:'Публичный API Kitsu не отдаёт NSFW без авторизации.'}]:[])];
   return {
-    items,
-    hasNext: successes.some(result => result.hasNext),
-    sources: successes.length === 2 ? ['AniList', 'MyAnimeList / Jikan'] : [successes[0].items[0]?.source || 'AniList'],
-    warning: failed.length ? 'Часть источников сейчас недоступна; показаны результаты подключённых источников.' : '',
+    items,hasNext:sourceResults.some(result=>result.hasNext),
+    sources:successes.map(x=>x.name),health,
+    warning:failed.length?`${failed.map(x=>x.name).join(', ')} сейчас недоступен; показаны ответы остальных каталогов.`:'',
   };
 }
 
-export const SOURCE_DETAILS = [
-  { name: 'AniList', description: 'Аниме, манга, ранобэ, рейтинги и связи между форматами', url: 'https://anilist.co', api: 'https://graphql.anilist.co' },
-  { name: 'MyAnimeList через Jikan', description: 'Независимый REST API каталога MyAnimeList; только безопасные для просмотра карточки', url: 'https://myanimelist.net', api: 'https://api.jikan.moe/v4' },
-  { name: 'YouTube', description: 'Официальные трейлеры — поиск или встроенный ролик, если источник предоставляет ID', url: 'https://www.youtube.com' },
+export async function findKitsuStreaming(item,signal) {
+  if(item.isAdult)return [];
+  let resourceId=item.kitsuId;
+  let resourceType=item.mediaType==='ANIME'?'anime':'manga';
+  if(!resourceId){
+    const params=new URLSearchParams({'filter[text]':item.title,'page[limit]':'8','include':'mappings'});
+    const response=await fetch(`${KITSU_URL}/${resourceType}?${params}`,{signal,headers:{Accept:'application/vnd.api+json'}});
+    if(!response.ok)throw new Error(`Kitsu поиск провайдера ответил ${response.status}`);
+    const json=await response.json();
+    const candidates=json.data||[];
+    const matched=item.malId?candidates.find(candidate=>{
+      const candidateMappingIds=new Set((candidate.relationships?.mappings?.data||[]).map(ref=>ref.id));
+      return (json.included||[]).some(mapping=>mapping.type==='mappings'&&candidateMappingIds.has(mapping.id)&&mapping.attributes?.externalSite===`myanimelist/${resourceType}`&&mapping.attributes?.externalId===String(item.malId));
+    })?.id:null;
+    const fallback=candidates.find(candidate=>normalizeTitle(candidate.attributes?.canonicalTitle)===normalizeTitle(item.title))||candidates[0];
+    resourceId=matched||fallback?.id;
+  }
+  if(!resourceId)return [];
+  const url=item.streamingUrl||`${KITSU_URL}/${resourceType}/${resourceId}/streaming-links?include=streamer`;
+  const response=await fetch(url,{signal,headers:{Accept:'application/vnd.api+json'}});
+  if(!response.ok)throw new Error(`Kitsu-ссылки ответили ${response.status}`);
+  const json=await response.json();
+  const streamers=new Map((json.included||[]).filter(x=>x.type==='streamers').map(x=>[x.id,x.attributes?.siteName||'Официальный сервис']));
+  return (json.data||[]).map(link=>{
+    const raw=link.attributes?.url||'';
+    const httpsUrl=raw.replace(/^http:/i,'https:');
+    const streamerId=link.relationships?.streamer?.data?.id;
+    let name=streamers.get(streamerId)||'';
+    if(!name){try{name=new URL(httpsUrl).hostname.replace(/^www\./,'');}catch{name='Сервис просмотра';}}
+    return {name,url:httpsUrl,subs:link.attributes?.subs||[],dubs:link.attributes?.dubs||[]};
+  }).filter(link=>/^https:\/\//i.test(link.url));
+}
+
+export const SOURCE_DETAILS=[
+  {name:'AniList',description:'Каталог аниме, манги/ранобэ, рейтинги и связи между форматами. Только метаданные.',url:'https://anilist.co',api:ANILIST_URL},
+  {name:'MyAnimeList / Jikan',description:'Дополнительные карточки и поиск каталога MyAnimeList. Не предоставляет эпизоды.',url:'https://myanimelist.net',api:`${JIKAN_URL}/anime`},
+  {name:'Kitsu',description:'Каталог аниме и манги; для карточек аниме API также публикует ссылки на платформы просмотра.',url:'https://kitsu.io',api:`${KITSU_URL}/anime`},
+  {name:'YouTube',description:'Официальные трейлеры и встроенные видео, если каталог предоставляет ID ролика.',url:'https://www.youtube.com'},
 ];

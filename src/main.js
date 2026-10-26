@@ -1,10 +1,11 @@
 import './style.css';
-import { searchCatalog, SOURCE_DETAILS } from './catalog.js';
+import { searchCatalog, findKitsuStreaming, SOURCE_DETAILS } from './catalog.js';
 
 const state = {
   page: 'home', query: '', filter: 'Аниме', adult: false, pendingFilter: null,
   items: [], saved: new Map(), modal: null, loading: true, searchPending: false,
-  error: '', warning: '', hasNext: false, pageNum: 1, sources: [], requestId: 0,
+  error: '', warning: '', hasNext: false, pageNum: 1, sources: [], sourceHealth: [], requestId: 0,
+  providerLinks: [], providerStatus: 'idle', providerError: '',
   settings: { autoplay: false, quality: 'Авто', theme: 'Тёмная', blur: true, notifications: true },
 };
 const app = document.querySelector('#app');
@@ -140,14 +141,16 @@ function renderModal() {
   }
   if (m.type==='watch') {
     const t=m.item;
-    return `<div class="modal-backdrop" data-dismiss><section class="modal player-modal" role="dialog" aria-modal="true"><div class="player-top"><span class="player-brand">${icon('play',16)} AniStream <i>·</i> ${esc(t.title)}</span><button class="close-btn" data-close>${icon('close')}</button></div><div class="owned-player"><video id="owned-video" controls playsinline preload="metadata" poster="/hero-cinematic.jpg"></video><div class="owned-player-empty"><span>${icon(t.mediaType==='ANIME'?'play':'book',28)}</span><b>Ваш видеопоток</b><small>Вставьте прямую ссылку на разрешённый MP4 / WebM / HLS источник</small></div></div><form class="player-url-form" data-player-form><label for="media-url">URL видеофайла или потока</label><div><input id="media-url" type="url" inputmode="url" placeholder="https://ваш-домен/episode.m3u8" required><button class="primary-btn" type="submit">Открыть в плеере ${icon('play',15)}</button></div><small>Используйте только собственные файлы или потоки, на воспроизведение которых у вас есть права. Страницы сайтов-провайдеров обычно не являются прямыми видео-URL.</small></form><div class="provider-panel compact-provider"><span class="modal-overline">НЕ НУЖЕН СВОЙ URL?</span><h2>${t.mediaType==='ANIME'?'Найдите у официальной платформы':'Проверьте официальные магазины и каталоги'}</h2><p>AniStream не хранит и не раздаёт чужие серии или главы.</p><div class="provider-links">${externalSources(t).map(([name,url])=>`<a class="secondary-btn small" target="_blank" rel="noreferrer" href="${esc(url)}">${esc(name)} ↗</a>`).join('')}</div><a class="provider-source" target="_blank" rel="noreferrer" href="${esc(safeUrl(t.url))}">Метаданные: ${esc(t.source)} ↗</a></div></section></div>`;
+    const providers=state.providerLinks;
+    const providerState=state.providerStatus==='loading'?'<div class="provider-loading"><span class="loader"></span>Проверяем ссылки платформ в Kitsu…</div>':state.providerStatus==='error'?`<div class="provider-error">${esc(state.providerError)}</div>`:providers.length?`<div class="provider-links">${providers.map(link=>`<a class="primary-btn" target="_blank" rel="noreferrer" href="${esc(link.url)}">${esc(link.name)} ↗<small>${esc([...link.subs.map(x=>`субтитры: ${x}`),...link.dubs.map(x=>`дубляж: ${x}`)].join(' · ')||'ссылка из каталога Kitsu')}</small></a>`).join('')}</div>`:'<p class="provider-empty">Kitsu не вернул ссылок просмотра для этого тайтла. Ниже — поиск у официальных платформ.</p>';
+    return `<div class="modal-backdrop" data-dismiss><section class="modal player-modal" role="dialog" aria-modal="true"><div class="player-top"><span class="player-brand">${icon('play',16)} AniStream <i>·</i> ${esc(t.title)}</span><button class="close-btn" data-close>${icon('close')}</button></div><div class="owned-player"><video id="owned-video" controls playsinline preload="metadata" poster="/hero-cinematic.jpg"></video><div class="owned-player-empty"><span>${icon(t.mediaType==='ANIME'?'play':'book',28)}</span><b>Свой HTML5-плеер</b><small>Смотрите собственные файлы или разрешённые прямые потоки MP4 / WebM / HLS</small></div></div><form class="player-url-form" data-player-form><label for="media-url">Прямая ссылка на видео (не страница сайта)</label><div><input id="media-url" type="url" inputmode="url" placeholder="https://ваш-домен/episode.m3u8" required><button class="primary-btn" type="submit">Открыть в плеере ${icon('play',15)}</button></div><small>Указывайте только URL контента, на воспроизведение которого у вас есть права.</small></form><div class="provider-panel compact-provider"><span class="modal-overline">ССЫЛКИ ПЛАТФОРМ ИЗ KITSU</span><h2>${t.mediaType==='ANIME'?'Доступность просмотра':'Официальные ссылки и каталоги'}</h2><p>Это ссылки на страницы платформ из каталога Kitsu, не встроенные видеопотоки. Доступность зависит от региона и прав сервиса.</p>${providerState}<div class="provider-links provider-fallback">${externalSources(t).map(([name,url])=>`<a class="secondary-btn small" target="_blank" rel="noreferrer" href="${esc(url)}">Поиск: ${esc(name)} ↗</a>`).join('')}</div><a class="provider-source" target="_blank" rel="noreferrer" href="${esc(safeUrl(t.url))}">Карточка: ${esc(t.source)} ↗</a></div></section></div>`;
   }
   if (m.type==='trailer') {
     const t=m.item, embed=trailerUrl(t), youtube='https://www.youtube.com/results?search_query='+encodeURIComponent(`${t.title} official trailer`);
     return `<div class="modal-backdrop" data-dismiss><section class="modal trailer-modal"><button class="close-btn trailer-close" data-close>${icon('close')}</button>${embed?`<div class="trailer-frame"><iframe src="${esc(embed)}" title="Трейлер: ${esc(t.title)}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`:`<div class="trailer-art"><div class="trailer-copy"><span class="modal-overline">ОФИЦИАЛЬНЫЙ ТРЕЙЛЕР</span><h2>${esc(t.title)}</h2><p>У этого источника нет прямого ID видео. Ищем трейлер по названию.</p><a class="primary-btn" target="_blank" rel="noreferrer" href="${esc(youtube)}">${icon('play',16)} Найти на YouTube</a></div></div>`}<div class="trailer-bottom"><span>${esc(t.source)} · метаданные карточки</span><a target="_blank" rel="noreferrer" href="${esc(youtube)}">Открыть YouTube ↗</a></div></section></div>`;
   }
   if (m.type==='info') {
-    const content=m.key==='sources'?`<p>Каталог уже загружает реальные метаданные через подключённые публичные API:</p><div class="source-list">${SOURCE_DETAILS.map(source=>`<div class="source-item"><b>${esc(source.name)}</b><span>${esc(source.description)}</span>${source.api?`<a target="_blank" rel="noreferrer" href="${esc(source.api)}">API ↗</a>`:''}<a target="_blank" rel="noreferrer" href="${esc(source.url)}">Каталог ↗</a></div>`).join('')}</div><p class="source-footnote">Обложки и описания принадлежат источникам. Видео и главы в AniStream не хранятся: кнопки доступа ведут к официальным площадкам. Связи аниме/манги/ранобэ берутся из графа отношений AniList.</p>`:`<p>Избранное, настройки и отметка подтверждения возраста сохраняются в localStorage на вашем устройстве. Поисковый запрос отправляется в выбранные публичные каталоги, чтобы получить результаты.</p>`;
+    const content=m.key==='sources'?`<p>Статус прямых подключений с устройства. AniList/Jikan/Kitsu возвращают метаданные; Kitsu может дополнительно вернуть ссылки на платформы для конкретного аниме.</p><button class="secondary-btn small source-check-button" data-source-check>Проверить каталоги сейчас</button><div class="source-list">${SOURCE_DETAILS.map(source=>{const health=state.sourceHealth.find(x=>x.name===source.name||x.name.startsWith(source.name));const status=health?.status==='ok'?'Подключён':health?.status==='error'?'Ошибка':health?.status==='skipped'?'Не используется':'Не проверен';return `<div class="source-item"><b>${esc(source.name)} <i class="health-dot ${health?.status||'unknown'}"></i></b><em>${status}</em><span>${esc(health?.message||source.description)}</span>${source.api?`<a target="_blank" rel="noreferrer" href="${esc(source.api)}">API ↗</a>`:''}<a target="_blank" rel="noreferrer" href="${esc(source.url)}">Сайт ↗</a></div>`}).join('')}</div><p class="source-footnote">Официальные стриминг-ссылки берутся из Kitsu и открываются на сайте провайдера; они могут быть недоступны в отдельных регионах. AniStream не получает и не раздаёт чужие видео или главы.</p>`:`<p>Избранное, настройки и отметка подтверждения возраста сохраняются в localStorage на вашем устройстве. Поисковый запрос отправляется в выбранные публичные каталоги, чтобы получить результаты.</p>`;
     return `<div class="modal-backdrop"><section class="modal info-modal"><button class="close-btn" data-close>${icon('close')}</button><div class="modal-overline">ANISTREAM · ПРОЗРАЧНО О ДАННЫХ</div><h2>${m.key==='sources'?'Источники и данные':'Конфиденциальность'}</h2>${content}<button class="primary-btn" data-close>Понятно</button></section></div>`;
   }
   return '';
@@ -162,7 +165,7 @@ function bind() {
   }));
   document.querySelectorAll('[data-open]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();const item=findItem(el.dataset.open);if(item){state.modal={type:'title',item};render();}}));
   document.querySelectorAll('[data-save]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();toggleSaved(el.dataset.save);}));
-  document.querySelectorAll('[data-watch]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();const item=findItem(el.dataset.watch);if(item){state.modal={type:'watch',item};render();}}));
+  document.querySelectorAll('[data-watch]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();const item=findItem(el.dataset.watch);if(item){state.modal={type:'watch',item};state.providerLinks=[];state.providerStatus='loading';state.providerError='';render();loadProviderLinks(item);}}));
   document.querySelectorAll('[data-trailer]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();const item=findItem(el.dataset.trailer);if(item){state.modal={type:'trailer',item};render();}}));
   document.querySelectorAll('[data-settings]').forEach(el=>el.addEventListener('click',()=>{state.modal={type:'settings'};render();}));
   document.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener('click',()=>{
@@ -182,6 +185,7 @@ function bind() {
   document.querySelector('[data-reset-search]')?.addEventListener('click',()=>{state.query='';state.filter='Все';loadCatalog(true);});
   document.querySelector('[data-retry]')?.addEventListener('click',()=>loadCatalog(true));
   document.querySelector('[data-load-more]')?.addEventListener('click',()=>loadCatalog(false));
+  document.querySelector('[data-source-check]')?.addEventListener('click',()=>loadCatalog(true));
   document.querySelector('[data-player-form]')?.addEventListener('submit',e=>{
     e.preventDefault();
     const input=document.querySelector('#media-url'); const url=safeUrl(input?.value);
@@ -194,6 +198,16 @@ function bind() {
   document.querySelectorAll('[data-info]').forEach(el=>el.addEventListener('click',e=>{e.preventDefault();state.modal={type:'info',key:el.dataset.info};render();}));
   const input=document.querySelector('#search');
   input?.addEventListener('input',e=>{state.query=e.target.value;state.page='catalog';state.filter='Все';state.searchPending=true;state.error='';render();clearTimeout(searchTimer);searchTimer=setTimeout(()=>loadCatalog(true),450);});
+}
+async function loadProviderLinks(item) {
+  try {
+    const links=await findKitsuStreaming(item);
+    if(state.modal?.type!=='watch'||state.modal.item.id!==item.id)return;
+    state.providerLinks=links;state.providerStatus='done';state.providerError='';render();
+  } catch(error) {
+    if(state.modal?.type!=='watch'||state.modal.item.id!==item.id)return;
+    state.providerLinks=[];state.providerStatus='error';state.providerError=`Kitsu недоступен: ${error.message||'ошибка сети'}`;render();
+  }
 }
 function findItem(id) { return state.items.find(item=>item.id===id)||state.saved.get(id)||null; }
 function toggleSaved(id) {
@@ -215,7 +229,7 @@ async function loadCatalog(reset=true) {
     const result=await searchCatalog({query:state.query.trim(),filter:state.filter,adult:state.adult,page,signal:controller.signal});
     if(request!==state.requestId)return;
     state.items=reset?result.items:[...state.items,...result.items.filter(item=>!state.items.some(old=>old.id===item.id))];
-    state.pageNum=page;state.hasNext=result.hasNext;state.sources=result.sources;state.warning=result.warning;
+    state.pageNum=page;state.hasNext=result.hasNext;state.sources=result.sources;state.sourceHealth=result.health;state.warning=result.warning;
   } catch(error) {
     if(error.name==='AbortError')return;
     state.error=error.message||'Не удалось связаться с источниками.';
